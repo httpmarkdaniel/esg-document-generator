@@ -47,20 +47,20 @@ function drawHeader(doc, assets, { certificateNumber, title }) {
   // Real EnviroCycle wordmark, extracted from the reference certificate PDF.
   drawAsset(doc, assets, 'logo', MARGIN, 6, 46)
 
-  doc.setFont('helvetica', 'normal')
+  doc.setFont('Poppins', 'normal')
   doc.setFontSize(9.5)
   doc.setTextColor(...BRAND.navy)
   doc.text(`Certificate No. ${toText(certificateNumber)}`, pageWidth - MARGIN, 12, { align: 'right' })
 
   let y = HEADER_HEIGHT + 14
   doc.setTextColor(...BRAND.green)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(24)
   doc.text(title, pageWidth / 2, y, { align: 'center' })
 
   y += 9
   doc.setTextColor(...BRAND.ink)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont('Poppins', 'normal')
   doc.setFontSize(11)
   doc.text('IS ISSUED TO :', pageWidth / 2, y, { align: 'center' })
 
@@ -73,20 +73,20 @@ function drawRecipientBlock(doc, data, y) {
   let cursorY = y + 11
 
   doc.setTextColor(...BRAND.navy)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(18)
   doc.text(toText(data.recipient), pageWidth / 2, cursorY, { align: 'center' })
 
   if (toText(data.companyAddress, '') !== '—') {
     cursorY += 6
     doc.setTextColor(...BRAND.muted)
-    doc.setFont('helvetica', 'normal')
+    doc.setFont('Poppins', 'normal')
     doc.setFontSize(10)
     doc.text(toText(data.companyAddress), pageWidth / 2, cursorY, { align: 'center' })
   }
 
   cursorY += 7
-  doc.setFont('helvetica', 'italic')
+  doc.setFont('Poppins', 'italic')
   doc.setFontSize(10)
   doc.setTextColor(...BRAND.ink)
   doc.text(`Reporting Period: ${data.reportingPeriodLabel}`, pageWidth / 2, cursorY, { align: 'center' })
@@ -101,7 +101,7 @@ function drawFooter(doc, assets, data) {
 
   let y = pageHeight - 60
   doc.setTextColor(...BRAND.ink)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont('Poppins', 'normal')
   doc.setFontSize(9.5)
   doc.text(`Given this day, ${data.givenDateLabel}, at ${COMPANY.name}`, pageWidth / 2, y, { align: 'center' })
   y += 4.5
@@ -117,11 +117,11 @@ function drawFooter(doc, assets, data) {
     doc.setLineWidth(0.2)
     doc.line(cx - 28, y - 5, cx + 28, y - 5)
     doc.setTextColor(...BRAND.navy)
-    doc.setFont('helvetica', 'bold')
+    doc.setFont('Poppins', 'bold')
     doc.setFontSize(10)
     doc.text(sig.name, cx, y, { align: 'center' })
     doc.setTextColor(...BRAND.muted)
-    doc.setFont('helvetica', 'normal')
+    doc.setFont('Poppins', 'normal')
     doc.setFontSize(7.5)
     doc.text(sig.title, cx, y + 4, { align: 'center' })
   })
@@ -129,7 +129,7 @@ function drawFooter(doc, assets, data) {
   // Disclaimer
   y = pageHeight - 28
   doc.setTextColor(...BRAND.muted)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont('Poppins', 'normal')
   doc.setFontSize(6.8)
   const disclaimer = CERTIFICATE_DISCLAIMER[data.certificateType] || CERTIFICATE_DISCLAIMER.EIC
   const lines = doc.splitTextToSize(disclaimer, pageWidth - MARGIN * 2)
@@ -149,39 +149,73 @@ const STAT_TILE_ICON_SIZE = 9
 
 /** How many lines `label` will wrap to inside a tile of width `w`. */
 function statTileLabelLineCount(doc, label, w) {
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(STAT_TILE_LABEL_SIZE)
   return doc.splitTextToSize(label, Math.max(w - 15, 20)).length
 }
 
 /**
- * A single rounded stat tile: icon (real asset if `iconKey` matches one, a
- * soft brand-color dot otherwise) + label + big green number. `labelLines`
- * is the line count to reserve for the label (pass the max across a row of
- * tiles so every tile's value lands on the same baseline).
+ * Vector approximations for the two tile icons with no raster asset
+ * available (CO2 and a water drop weren't embedded as images in the
+ * reference PDF — they're drawn directly with PDF vector operators there,
+ * which PyMuPDF can't extract as a raster). Drawn inside the same cream
+ * circular badge as the real icon assets.
  */
-function drawStatTile(doc, assets, x, y, w, label, value, labelLines = 1, iconKey) {
-  const textX = x + 15
-  const textW = Math.max(w - 15, 20)
+function drawVectorIcon(doc, shape, cx, cy) {
+  if (shape === 'co2') {
+    doc.setTextColor(...BRAND.green)
+    doc.setFont('Poppins', 'bold')
+    doc.setFontSize(6.5)
+    doc.text('CO2', cx, cy + 1, { align: 'center' })
+  } else if (shape === 'water') {
+    doc.setFillColor(70, 150, 210)
+    doc.circle(cx, cy + 0.8, 2, 'F')
+    doc.triangle(cx - 1.7, cy + 0.2, cx + 1.7, cy + 0.2, cx, cy - 2.6, 'F')
+  }
+}
+
+/** Cream circular badge behind every tile icon, matching the reference's icon frames. */
+function drawIconBadge(doc, assets, cx, cy, iconKey, vectorShape) {
+  doc.setFillColor(...BRAND.iconCream)
+  doc.setDrawColor(...BRAND.green)
+  doc.setLineWidth(0.25)
+  doc.circle(cx, cy, 5, 'FD')
 
   const iconImage = iconKey && assets?.[iconKey]
   if (iconImage) {
     const dim = ASSET_DIMENSIONS[iconKey]
     const iconH = STAT_TILE_ICON_SIZE * (dim.height / dim.width)
-    doc.addImage(iconImage, 'PNG', x + 6 - STAT_TILE_ICON_SIZE / 2, y + 4 - iconH / 2, STAT_TILE_ICON_SIZE, iconH)
+    doc.addImage(iconImage, 'PNG', cx - STAT_TILE_ICON_SIZE / 2, cy - iconH / 2, STAT_TILE_ICON_SIZE, iconH)
+  } else if (vectorShape) {
+    drawVectorIcon(doc, vectorShape, cx, cy)
+  }
+}
+
+/**
+ * A single rounded stat tile: icon badge (real asset, a vector
+ * approximation, or a plain circle) + label + big green number.
+ * `labelLines` is the line count to reserve for the label (pass the max
+ * across a row of tiles so every tile's value lands on the same baseline).
+ */
+function drawStatTile(doc, assets, x, y, w, label, value, labelLines = 1, iconKey, vectorShape) {
+  const textX = x + 15
+  const textW = Math.max(w - 15, 20)
+
+  if (iconKey || vectorShape) {
+    drawIconBadge(doc, assets, x + 6, y + 4, iconKey, vectorShape)
   } else {
     doc.setFillColor(...BRAND.navy)
     withAlpha(doc, 0.08, () => doc.circle(x + 6, y + 4, 5, 'F'))
   }
 
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(STAT_TILE_LABEL_SIZE)
   doc.setTextColor(...BRAND.ink)
   doc.text(doc.splitTextToSize(label, textW), textX, y + 2.5)
 
   const valueY = y + 2.5 + labelLines * STAT_TILE_LABEL_LINE_HEIGHT + 4
   doc.setTextColor(...BRAND.green)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(15)
   doc.text(value, textX, valueY)
 }
@@ -193,14 +227,14 @@ function drawPanel(doc, assets, x, y, w, h, title, tiles) {
   doc.roundedRect(x, y, w, h, 3, 3, 'S')
 
   doc.setTextColor(...BRAND.green)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(9.5)
   doc.text(title, x + w / 2, y - 3, { align: 'center' })
 
   const tileW = (w - 8) / tiles.length
   const maxLabelLines = Math.max(...tiles.map((t) => statTileLabelLineCount(doc, t.label, tileW - 2)))
   tiles.forEach((tile, i) => {
-    drawStatTile(doc, assets, x + 4 + tileW * i, y + h / 2 - 8, tileW - 2, tile.label, tile.value, maxLabelLines, tile.icon)
+    drawStatTile(doc, assets, x + 4 + tileW * i, y + h / 2 - 8, tileW - 2, tile.label, tile.value, maxLabelLines, tile.icon, tile.vector)
   })
 }
 
@@ -218,7 +252,7 @@ function drawEnvironmentalImpactCertificate(doc, assets, data) {
   const panelW = (pageWidth - MARGIN * 2 - gap) / 2
 
   const resultTiles = [
-    { label: 'Carbon Saved', value: `${formatNumber(data.netCarbonAbatedKgCO2e)}\nkg CO2e` },
+    { label: 'Carbon Saved', value: `${formatNumber(data.netCarbonAbatedKgCO2e)}\nkg CO2e`, vector: 'co2' },
     { label: 'Landfill Diverted', value: `${formatNumber(data.landfillDivertedKg)}\nkg`, icon: 'iconRecycle' },
     { label: 'Plastic Recycled', value: `${formatNumber(data.plasticRecycledKg)}\nkg`, icon: 'iconRecycle' },
   ]
@@ -226,7 +260,7 @@ function drawEnvironmentalImpactCertificate(doc, assets, data) {
 
   const savingsTiles = [
     data.treesSaved > 0 && { label: 'Trees Saved', value: `${formatNumber(data.treesSaved, 0)}\nTrees`, icon: 'iconTree' },
-    data.waterSavedLiters > 0 && { label: 'Water Saved', value: `${formatNumber(data.waterSavedLiters, 0)}\nL` },
+    data.waterSavedLiters > 0 && { label: 'Water Saved', value: `${formatNumber(data.waterSavedLiters, 0)}\nL`, vector: 'water' },
     data.energySavedKwh > 0 && { label: 'Energy Saved', value: `${formatNumber(data.energySavedKwh)}\nkWh`, icon: 'iconEnergy' },
   ].filter(Boolean)
   if (savingsTiles.length) {
@@ -244,7 +278,7 @@ function drawCarbonAbatementCertificate(doc, assets, data) {
   y = drawRecipientBlock(doc, data, y)
 
   doc.setTextColor(...BRAND.muted)
-  doc.setFont('helvetica', 'italic')
+  doc.setFont('Poppins', 'italic')
   doc.setFontSize(8.5)
   doc.text('Basis: Net carbon abated = avoided virgin production emissions - recycled processing emissions', doc.internal.pageSize.getWidth() / 2, y, {
     align: 'center',
@@ -254,9 +288,9 @@ function drawCarbonAbatementCertificate(doc, assets, data) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const tiles = [
     { label: 'Materials Collected', value: `${formatNumber(data.materialsCollectedKg)}\nKG`, icon: 'iconRecycle' },
-    { label: 'Total Carbon Footprint', value: `${formatNumber(data.totalCarbonFootprintKgCO2e)}\nkg CO2e` },
-    { label: 'Net Carbon Abated', value: `${formatNumber(data.netCarbonAbatedKgCO2e / 1000)}\ntCO2e` },
-    { label: 'Recycled Emissions', value: `${formatNumber(data.recycledEmissionsKgCO2e)}\nkg CO2e` },
+    { label: 'Total Carbon Footprint', value: `${formatNumber(data.totalCarbonFootprintKgCO2e)}\nkg CO2e`, vector: 'co2' },
+    { label: 'Net Carbon Abated', value: `${formatNumber(data.netCarbonAbatedKgCO2e / 1000)}\ntCO2e`, vector: 'co2' },
+    { label: 'Recycled Emissions', value: `${formatNumber(data.recycledEmissionsKgCO2e)}\nkg CO2e`, vector: 'co2' },
     { label: 'Carbon Benefits Equivalent', value: `~${formatNumber(data.kmAvoided, 0)} km\navoided` },
   ]
   const cols = 3
@@ -265,7 +299,7 @@ function drawCarbonAbatementCertificate(doc, assets, data) {
   tiles.forEach((tile, i) => {
     const col = i % cols
     const row = Math.floor(i / cols)
-    drawStatTile(doc, assets, MARGIN + tileW * col, y + row * 20, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon)
+    drawStatTile(doc, assets, MARGIN + tileW * col, y + row * 20, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon, tile.vector)
   })
 
   drawFooter(doc, assets, data)
@@ -283,7 +317,7 @@ function drawLandfillDivertedCertificate(doc, assets, data) {
   const rightX = MARGIN + leftW + 8
 
   doc.setTextColor(...BRAND.green)
-  doc.setFont('helvetica', 'bold')
+  doc.setFont('Poppins', 'bold')
   doc.setFontSize(9.5)
   doc.text('MATERIAL DIVERSION SUMMARY', MARGIN, y)
   doc.text('RECYCLED MATERIALS SUMMARY', rightX, y)
@@ -334,7 +368,7 @@ function drawRecycledPlasticsCertificate(doc, assets, data) {
   const tileW = (pageWidth - MARGIN * 2) / tiles.length
   const maxLabelLines = Math.max(...tiles.map((t) => statTileLabelLineCount(doc, t.label, tileW - 6)))
   tiles.forEach((tile, i) => {
-    drawStatTile(doc, assets, MARGIN + tileW * i, y + 6, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon)
+    drawStatTile(doc, assets, MARGIN + tileW * i, y + 6, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon, tile.vector)
   })
 
   drawFooter(doc, assets, data)

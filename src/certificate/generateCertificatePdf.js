@@ -6,6 +6,7 @@
 import { jsPDF } from 'jspdf'
 import { drawCertificate } from './certificateTemplate.js'
 import { loadCertificateAssets } from './assets.js'
+import { loadPoppinsFonts, registerPoppins } from './fonts.js'
 import { slugifyForFilename } from '../lib/download.js'
 import { CERTIFICATE_TYPES } from '../lib/brand.js'
 
@@ -14,9 +15,10 @@ import { CERTIFICATE_TYPES } from '../lib/brand.js'
  * @returns {Promise<{ blob: Blob, filename: string }>}
  */
 export async function generateCertificatePdf(data) {
-  const assets = await loadCertificateAssets()
+  const [assets, fonts] = await Promise.all([loadCertificateAssets(), loadPoppinsFonts()])
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  registerPoppins(doc, fonts)
   drawCertificate(doc, assets, data)
 
   const typeLabel = CERTIFICATE_TYPES[data.certificateType]?.label || 'certificate'

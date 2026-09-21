@@ -1,17 +1,27 @@
 # ESG Document Generator
 
-A tool with two tabs:
+A tool with three tabs:
 
 1. **Impact Calculator** → enter weight + material split, get carbon/water/
    energy/landfill results — reproduces the real "ESG Impact Calculator.html"
    exactly (same factors, same math). This is the single source of truth for
    ESG math anywhere in the app.
-2. **Generate Documents** → configure a Certificate (PDF, one of 4 types)
-   and an ESG Report (PDF) side by side, then **one button generates and
-   downloads both**. Both match the real EnviroCycle reference documents
-   (`Template ESG Certificates.pdf` and `Carbon Abatement - Client
-   Template.pdf`) and use the real extracted brand assets (logo, tile
-   icons, compliance-logo strip).
+2. **Certificate** → PDF, one of 4 types, replicating `Template ESG
+   Certificates.pdf` closely: the real extracted logo/tile icons/compliance
+   strip, the real sampled brand colors, and the Poppins font embedded to
+   match the reference's rounded typeface (jsPDF's built-in fonts don't have
+   a rounded option, so this uses `doc.addFont` to embed real font files
+   rather than substituting Helvetica).
+3. **ESG Report** → PDF, replicating `Carbon Abatement - Client Template.pdf`
+   closely: that PDF's *own* embedded images (letterhead, gradient top bar,
+   two-row compliance strip, form-code footer) reused directly rather than
+   redrawn, and the same serif (`times`) typeface and near-black text the
+   reference uses — a deliberately different look from the certificate's
+   rounded/green branding, because the two reference documents look
+   different from each other.
+
+Selecting an RR in the Certificate tab also adds that RR as a row on the
+Report tab in the background (see "Receiving Report autofill" below).
 
 "Use in Certificate" / "Add to Report" on the Calculator tab carries a
 computed result straight into the Documents tab's forms — values never need
@@ -26,8 +36,8 @@ Envirocycle's RR consolidation Google Sheet instead of manual entry:
 - **Certificate**: a date-range loader narrows an RR-number picker
   (typeahead, otherwise over all ~1,725 RR reference numbers); selecting one
   autofills recipient, address, and net-weight fields from that RR's line
-  items — **and adds the same RR as a row on the Report below**, so one
-  selection feeds both documents.
+  items — **and adds the same RR as a row on the Report tab**, even though
+  they're separate tabs.
 - **Report**: a received-date range loads every RR in that window as its
   own asset-category row (weight only).
 
@@ -68,9 +78,9 @@ calculatorEngine.calculateImpact()              api/rr-data.js (CSV → JSON)
       │                                          src/rrData/rrClient.js
       ├─ "Use in Certificate" ──────┐            (fetch, cache, aggregate)
       └─ "Add to Report" ───────┐   │                   │
-                                 │   │      ┌── RR number picker (Certificate)
-                                 ▼   ▼      └── date-range loader (Report)
-                    Generate Documents tab
+                                 │   │      ┌── RR number picker (Certificate tab)
+                                 ▼   ▼      └── date-range loader (Report tab)
+                    Certificate tab / Report tab
                                  │
                                  ▼
                    normalize / validate data
@@ -80,15 +90,15 @@ calculatorEngine.calculateImpact()              api/rr-data.js (CSV → JSON)
                     │                    │
                     ▼                    ▼
    certificateTemplate.js   reportAggregator.js (→ ESGReportData)
-                    │                    │
+    (Poppins font, real                  │
+     cert assets)                        ▼
+                    │        reportPdfTemplate.js (times font,
+                    │         real report-PDF-sourced assets)
                     ▼                    ▼
-  generateCertificatePdf.js   reportPdfTemplate.js → generateReportPdf.js
+  generateCertificatePdf.js       generateReportPdf.js
                     │                    │
                     ▼                    ▼
                   PDF                  PDF
-                    └─────────┬────────┘
-                  "Generate Certificate + Report"
-                   (one click, both downloads)
 ```
 
 - **`src/calculator/`** — the ESG math, reverse-engineered from the real
@@ -154,36 +164,61 @@ calculatorEngine.calculateImpact()              api/rr-data.js (CSV → JSON)
 
 - **`src/components/`** — the UI: `CalculatorPanel.jsx` (inputs + live
   results + breakdown table, matching the real calculator), plus
-  `CertificateGenerator.jsx` and `ReportGenerator.jsx` — both `forwardRef`
-  components exposing an imperative `generate()` (validate + build the PDF,
-  never auto-download) so `pages/ESGDocumentsPage.jsx` can drive "generate
-  both" from one button while each form still shows its own inline
-  validation. Passing `hideActions` hides each component's own standalone
-  generate button/card.
+  `CertificateGenerator.jsx` and `ReportGenerator.jsx`, each with its own
+  form, live preview, and generate button. `pages/ESGDocumentsPage.jsx`
+  wires the Calculator's "Use in Certificate"/"Add to Report" handoffs and
+  the Certificate's RR picker → Report row across tabs.
 
 ## Brand assets
 
-`src/assets/certificate/` holds the **real EnviroCycle logo, the tree/
-energy/recycle tile icons, and a composited ISO/BSI/FDA/BPAP/UN compliance-
-logo strip** — extracted directly from the reference
-`Template ESG Certificates.pdf`'s embedded images (merging each image with
-its separate PDF soft-mask/alpha channel, then downscaled to a sane print
-resolution) rather than redrawn. `src/certificate/assets.js` loads and
-caches them as data URLs for `jsPDF.addImage`; `assetDimensions.js` holds
-just their pixel dimensions (kept dependency-free so
-`certificateTemplate.js`/`reportPdfTemplate.js` don't need a browser to
-import it — useful for Node-based testing of the drawing logic). The
-compliance-badge order in the composited strip is close to, but not
-pixel-identical to, the source PDF's row (they were composited fresh rather
-than cropped in place). The Report PDF reuses the same logo/compliance-strip
-assets.
+Both PDFs are built from images **extracted from their own respective
+reference PDF** — via PyMuPDF, merging each embedded image with its
+separate PDF soft-mask/alpha channel (a naive extraction leaves opaque
+black backgrounds, since the alpha channel is a distinct XObject the PDF
+references via `/SMask`) — rather than redrawn from scratch:
+
+- **`src/assets/certificate/`** (from `Template ESG Certificates.pdf`): the
+  logo, tree/energy/recycle tile icons, and a compliance-logo strip
+  composited from that PDF's individual badge images (its order is close
+  to, but not pixel-identical to, the source's row — they were composited
+  fresh rather than cropped in place). Two tile icons (CO2, water-drop)
+  aren't embedded as raster images in that PDF — they're vector-drawn
+  directly — so `certificateTemplate.js`'s `drawVectorIcon()` approximates
+  them instead. Loaded via `src/certificate/assets.js`.
+- **`src/assets/report/`** (from `Carbon Abatement - Client Template.pdf`):
+  that PDF's own pre-composed images — `letterhead.png` (logo + company
+  name/address/phone/email/website, all one image), `gradient-bar.png`
+  (the exact teal→blue top bar), `compliance-strip.png` (its real two-row
+  badge strip), `form-code.png` (the "EPI FORM-DCC ..." footer text). Using
+  these directly, rather than trying to recreate them with text/shapes, is
+  what makes the report match closely. Loaded via `src/reports/assets.js`.
+- **`src/assets/fonts/`**: Poppins (OFL-licensed, Google Fonts) — the
+  certificate's real typeface is a rounded geometric sans that jsPDF's
+  built-in fonts (Helvetica/Times/Courier) can't reproduce, so
+  `src/certificate/fonts.js` embeds the real TTFs into the PDF via
+  `doc.addFileToVFS`/`doc.addFont` (see `fontRegistration.js` for the
+  dependency-free half, split out the same way as `assetDimensions.js`, so
+  Node-based tests don't need a browser to import font files). The report
+  uses jsPDF's built-in `times` instead — the reference report's body text
+  is a plain serif, so no embedding was needed there.
+
+Both `assetDimensions.js` files hold just pixel dimensions in a
+dependency-free module, so `certificateTemplate.js`/`reportPdfTemplate.js`
+can be exercised from plain Node (no browser) when testing the drawing
+logic — see the smoke-test pattern used throughout development (build a
+`jsPDF` doc, pass in `fs`-read base64 assets, assert on the output bytes).
+
+Brand colors in `src/lib/brand.js` (navy/lime/green for the certificate,
+`reportBlue` for the report) were sampled pixel-for-pixel from a
+`pymupdf`-rendered PNG of each reference PDF, not eyeballed.
 
 ## Replacing the templates later
 
 When an *official* (agency-issued, not extracted) set of assets is ready:
 
-- Swap the files in `src/assets/certificate/` and, if sizing/aspect ratios
-  differ, adjust the `ASSET_DIMENSIONS` values in `assetDimensions.js`.
+- Swap the files in `src/assets/certificate/` or `src/assets/report/` and,
+  if sizing/aspect ratios differ, adjust the corresponding
+  `*_ASSET_DIMENSIONS` values.
 - Certificate layout: rewrite `src/certificate/certificateTemplate.js` (the
   per-type `draw*Certificate(doc, assets, data)` functions, or just
   `drawHeader`/`drawFooter`). Nothing else needs to change.
@@ -199,5 +234,6 @@ the design changes.
 - Vite + React 19
 - Tailwind CSS v4
 - [`jspdf`](https://github.com/parallax/jsPDF) + `jspdf-autotable` for both PDFs (certificate + report)
+- [Poppins](https://fonts.google.com/specimen/Poppins) (OFL) embedded into the certificate PDF; jsPDF's built-in `times` for the report
 - [`papaparse`](https://www.papaparse.com/) for parsing the RR sheet's CSV export, server-side
 - A Vercel serverless function (`api/rr-data.js`) proxying the public Google Sheet

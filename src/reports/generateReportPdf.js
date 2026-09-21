@@ -4,7 +4,7 @@
 
 import { jsPDF } from 'jspdf'
 import { drawReportPdf } from './reportPdfTemplate.js'
-import { loadCertificateAssets } from '../certificate/assets.js'
+import { loadReportAssets } from './assets.js'
 import { slugifyForFilename } from '../lib/download.js'
 
 /**
@@ -12,7 +12,7 @@ import { slugifyForFilename } from '../lib/download.js'
  * @returns {Promise<{ blob: Blob, filename: string }>}
  */
 export async function generateReportPdf(data) {
-  const assets = await loadCertificateAssets()
+  const assets = await loadReportAssets()
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   drawReportPdf(doc, assets, data)

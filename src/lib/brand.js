@@ -5,17 +5,25 @@
 export const COMPANY = {
   name: 'Envirocycle Philippines Inc.',
   addressLine: 'CA Yulo Ave, Silangan Industrial Park, Canlubang, Calamba City, Laguna',
+  // Full letterhead form used on the report (matches the reference exactly).
+  letterheadAddressLine: 'CA Yulo Avenue, Silangan Industrial Park, Canlubang Calamba City, Laguna 4028 Philippines',
+  phone: '(+63) 917 834 9596',
+  email: 'info@envirocycle-inc.com',
+  website: 'www.envirocycle-inc.com',
 }
 
-// Approximate brand palette read off the reference PDF (navy header band,
-// lime-green diagonal accent, deep-green headings/stat numbers).
+// Brand palette, sampled pixel-for-pixel from a high-res render of the
+// reference PDFs (navy header band, lime-green diagonal accent, deep-green
+// headings/stat numbers on the certificates; teal top bar on the report).
 export const BRAND = {
-  navy: [14, 42, 71],
-  lime: [141, 198, 63],
-  green: [22, 94, 63],
+  navy: [0, 46, 86],
+  lime: [145, 205, 68],
+  green: [0, 103, 55],
   ink: [31, 41, 55],
   muted: [107, 114, 128],
   border: [209, 213, 219],
+  iconCream: [255, 246, 232],
+  reportBlue: [69, 171, 204],
 }
 
 // Fixed signatories shown on every certificate and the Word report.
