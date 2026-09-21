@@ -188,7 +188,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
               onClick={() => setType(t.id)}
               className={`rounded-lg border px-3 py-2.5 text-left text-sm font-medium transition ${
                 type === t.id
-                  ? 'border-emerald-600 bg-emerald-50 text-emerald-800 ring-1 ring-emerald-600'
+                  ? 'border-brand-green bg-brand-green-light text-brand-green-dark ring-1 ring-brand-green'
                   : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
               }`}
             >
@@ -227,7 +227,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
               <button
                 type="button"
                 onClick={() => setRrFilteredNumbers(null)}
-                className="font-medium text-emerald-700 hover:underline"
+                className="font-medium text-brand-green hover:underline"
               >
                 Clear filter
               </button>
@@ -476,9 +476,9 @@ function CertificatePreviewTiles({ type, preview }) {
   return (
     <div className="grid grid-cols-2 gap-3">
       {tiles.map(([label, value]) => (
-        <div key={label} className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/80">{label}</div>
-          <div className="mt-0.5 text-lg font-semibold text-emerald-900">{value}</div>
+        <div key={label} className="rounded-lg border border-brand-green/15 bg-brand-green-light px-3 py-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-brand-green/70">{label}</div>
+          <div className="mt-0.5 text-lg font-semibold text-brand-green-dark">{value}</div>
         </div>
       ))}
     </div>

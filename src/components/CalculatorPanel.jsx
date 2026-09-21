@@ -117,7 +117,7 @@ export function CalculatorPanel({ onUseInCertificate, onAddToReport }) {
           <div className="border-t border-gray-100 pt-4">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-gray-500">02 &nbsp;Material split</span>
-              <span className={`text-xs font-semibold ${Math.abs(splitTotal - 100) < 0.01 ? 'text-emerald-600' : 'text-red-600'}`}>
+              <span className={`text-xs font-semibold ${Math.abs(splitTotal - 100) < 0.01 ? 'text-brand-green' : 'text-red-600'}`}>
                 {formatNumber(splitTotal, 1)}% total
               </span>
             </div>
@@ -140,21 +140,21 @@ export function CalculatorPanel({ onUseInCertificate, onAddToReport }) {
 
       <div className="flex flex-col gap-5">
         <Card title="Environmental Impact" subtitle="Per item description — results update as you type.">
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/80">Net Carbon Abated</div>
+          <div className="rounded-xl border border-brand-green/15 bg-brand-green-light p-4">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-brand-green/70">Net Carbon Abated</div>
             <div className="mt-0.5 flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-emerald-900">{formatNumber(result.netCarbonAbatedKgCO2e)}</span>
-              <span className="text-sm text-emerald-700">kg CO2e</span>
+              <span className="text-3xl font-bold text-brand-green-dark">{formatNumber(result.netCarbonAbatedKgCO2e)}</span>
+              <span className="text-sm text-brand-green">kg CO2e</span>
             </div>
-            <p className="mt-1 text-xs text-emerald-700/70">Estimated primary-material emissions minus recycling emissions.</p>
-            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-emerald-100 pt-3">
+            <p className="mt-1 text-xs text-brand-green/60">Estimated primary-material emissions minus recycling emissions.</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-brand-green/15 pt-3">
               <div>
-                <div className="text-xs text-emerald-700/70">Total carbon footprint</div>
-                <div className="font-semibold text-emerald-900">{formatUnit(result.totalCarbonFootprintKgCO2e, 'kg CO2e')}</div>
+                <div className="text-xs text-brand-green/60">Total carbon footprint</div>
+                <div className="font-semibold text-brand-green-dark">{formatUnit(result.totalCarbonFootprintKgCO2e, 'kg CO2e')}</div>
               </div>
               <div>
-                <div className="text-xs text-emerald-700/70">Total recycled emissions</div>
-                <div className="font-semibold text-emerald-900">{formatUnit(result.recycledEmissionsKgCO2e, 'kg CO2e')}</div>
+                <div className="text-xs text-brand-green/60">Total recycled emissions</div>
+                <div className="font-semibold text-brand-green-dark">{formatUnit(result.recycledEmissionsKgCO2e, 'kg CO2e')}</div>
               </div>
             </div>
           </div>
@@ -202,7 +202,7 @@ export function CalculatorPanel({ onUseInCertificate, onAddToReport }) {
         subtitle="Material kg = net weight × material %. Each emissions column is material kg × its factor."
         className="lg:col-span-2"
       >
-        <button type="button" onClick={() => setShowBreakdown((s) => !s)} className="mb-3 text-xs font-medium text-emerald-700 hover:underline">
+        <button type="button" onClick={() => setShowBreakdown((s) => !s)} className="mb-3 text-xs font-medium text-brand-green hover:underline">
           {showBreakdown ? 'Hide' : 'Show'} breakdown table
         </button>
         {showBreakdown && (
@@ -235,7 +235,7 @@ export function CalculatorPanel({ onUseInCertificate, onAddToReport }) {
                       <td className="py-1.5 pr-2 text-right">{formatNumber(m.primaryEmissionsKgCO2e)}</td>
                       <td className="py-1.5 pr-2 text-right text-gray-400">{formatNumber(m.recyclingFactor, 2)}</td>
                       <td className="py-1.5 pr-2 text-right">{formatNumber(m.recyclingEmissionsKgCO2e)}</td>
-                      <td className="py-1.5 text-right font-semibold text-emerald-700">{formatNumber(m.netAbatedKgCO2e)}</td>
+                      <td className="py-1.5 text-right font-semibold text-brand-green">{formatNumber(m.netAbatedKgCO2e)}</td>
                     </tr>
                   )
                 })}
@@ -247,7 +247,7 @@ export function CalculatorPanel({ onUseInCertificate, onAddToReport }) {
                   <td className="py-1.5 pr-2 text-right">{formatNumber(result.totalCarbonFootprintKgCO2e)}</td>
                   <td className="py-1.5 pr-2 text-right text-gray-400">—</td>
                   <td className="py-1.5 pr-2 text-right">{formatNumber(result.recycledEmissionsKgCO2e)}</td>
-                  <td className="py-1.5 text-right text-emerald-700">{formatNumber(result.netCarbonAbatedKgCO2e)}</td>
+                  <td className="py-1.5 text-right text-brand-green">{formatNumber(result.netCarbonAbatedKgCO2e)}</td>
                 </tr>
               </tbody>
             </table>

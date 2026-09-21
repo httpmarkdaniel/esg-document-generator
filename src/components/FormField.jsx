@@ -10,7 +10,7 @@ export function FormField({ label, error, hint, children }) {
 }
 
 const baseInputClass =
-  'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100'
+  'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none transition focus:border-brand-green focus:ring-2 focus:ring-brand-green/15'
 
 export function TextInput(props) {
   return <input {...props} className={`${baseInputClass} ${props.className ?? ''}`} />
