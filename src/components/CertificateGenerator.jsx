@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
 import { Card, PrimaryButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import {
@@ -11,12 +11,25 @@ import { generateCertificatePdf } from '../certificate/generateCertificatePdf.js
 import { CERTIFICATE_TYPE_LIST } from '../lib/brand.js'
 import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
+import { getRrNumbers, getRrSummary } from '../rrData/rrClient.js'
 
-export function CertificateGenerator({ prefillCalculation, onPrefillConsumed } = {}) {
+export const CertificateGenerator = forwardRef(function CertificateGenerator({ prefillCalculation, onPrefillConsumed, hideActions = false }, ref) {
   const [form, setForm] = useState({ ...emptyCertificateForm(), periodStart: todayIso(), periodEnd: todayIso(), givenDate: todayIso() })
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
+
+  const [rrNumbers, setRrNumbers] = useState([])
+  const [rrInput, setRrInput] = useState('')
+  const [rrLoading, setRrLoading] = useState(false)
+  const [rrSummary, setRrSummary] = useState(null)
+  const [rrError, setRrError] = useState(null)
+
+  useEffect(() => {
+    getRrNumbers()
+      .then(setRrNumbers)
+      .catch((err) => setRrError(err.message))
+  }, [])
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — never re-derive
@@ -58,30 +71,65 @@ export function CertificateGenerator({ prefillCalculation, onPrefillConsumed } =
     setStatus(null)
   }
 
+  async function handleRrSelect(referenceNo) {
+    setRrInput(referenceNo)
+    if (!rrNumbers.includes(referenceNo)) {
+      setRrSummary(null)
+      return
+    }
+    setRrLoading(true)
+    setRrError(null)
+    try {
+      const summary = await getRrSummary(referenceNo)
+      setRrSummary(summary)
+      setForm((f) => ({
+        ...f,
+        recipient: summary.accountName || f.recipient,
+        companyAddress: summary.pickupAddress || summary.billingAddress || f.companyAddress,
+        materialsCollectedKg: String(summary.totalNetWeight),
+        landfillDivertedKg: String(summary.totalNetWeight),
+      }))
+      setStatus({ tone: 'success', message: `Autofilled from RR ${referenceNo} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). Carbon/water/energy are not in the sheet — enter those manually or via the Calculator.` })
+    } catch (err) {
+      setRrError(err.message)
+    } finally {
+      setRrLoading(false)
+    }
+  }
+
   const previewNumber = useMemo(() => generateCertificateNumber(form.certificateType, form), [form])
   const preview = useMemo(() => normalizeCertificateData(form, { certificateNumber: previewNumber }), [form, previewNumber])
 
-  async function handleGenerate() {
+  /** Validate + build the PDF. Returns { ok:true, blob, filename } or { ok:false }. Never auto-downloads. */
+  async function buildCertificate() {
     const validationErrors = validateCertificateForm(form)
     setErrors(validationErrors)
     if (Object.keys(validationErrors).length) {
       setStatus({ tone: 'error', message: 'Fix the highlighted fields before generating the certificate.' })
-      return
+      return { ok: false }
     }
-
-    setGenerating(true)
-    setStatus(null)
     try {
       const data = normalizeCertificateData(form, { certificateNumber: previewNumber })
       const { blob, filename } = await generateCertificatePdf(data)
-      downloadBlob(blob, filename)
-      setStatus({ tone: 'success', message: `Certificate generated: ${filename}` })
+      return { ok: true, blob, filename }
     } catch (err) {
       console.error(err)
       setStatus({ tone: 'error', message: 'Something went wrong generating the PDF. Please try again.' })
-    } finally {
-      setGenerating(false)
+      return { ok: false }
     }
+  }
+
+  useImperativeHandle(ref, () => ({ generate: buildCertificate }))
+
+  async function handleGenerate() {
+    setGenerating(true)
+    setStatus(null)
+    const result = await buildCertificate()
+    if (result.ok) {
+      downloadBlob(result.blob, result.filename)
+      setStatus({ tone: 'success', message: `Certificate generated: ${result.filename}` })
+    }
+    setGenerating(false)
   }
 
   const type = form.certificateType
@@ -106,6 +154,35 @@ export function CertificateGenerator({ prefillCalculation, onPrefillConsumed } =
             </button>
           ))}
         </div>
+      </Card>
+
+      <Card title="Load from Receiving Report" subtitle="Source of truth: the RR consolidation Google Sheet. Autofills recipient/address/weight only.">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="flex-1">
+            <FormField label="RR Number" hint={rrNumbers.length ? `${rrNumbers.length} RR numbers available` : 'Loading…'}>
+              <TextInput
+                list="rr-number-options"
+                value={rrInput}
+                onChange={(e) => handleRrSelect(e.target.value)}
+                placeholder="Start typing an RR number, e.g. S18516"
+              />
+              <datalist id="rr-number-options">
+                {rrNumbers.map((rr) => (
+                  <option key={rr} value={rr} />
+                ))}
+              </datalist>
+            </FormField>
+          </div>
+          {rrLoading && <span className="pb-2.5 text-xs text-gray-400">Loading…</span>}
+        </div>
+        {rrError && <Banner tone="error">{rrError}</Banner>}
+        {rrSummary && (
+          <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            <strong>{rrSummary.referenceNo}</strong> — {rrSummary.accountName} · {rrSummary.itemCount} item row(s) ·{' '}
+            {formatKg(rrSummary.totalNetWeight)} net weight · received {rrSummary.receivedDate || '—'}
+            {rrSummary.itemTypes.length > 0 && <> · {rrSummary.itemTypes.slice(0, 5).join(', ')}</>}
+          </div>
+        )}
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -284,18 +361,25 @@ export function CertificateGenerator({ prefillCalculation, onPrefillConsumed } =
           </div>
         </Card>
 
-        <Card>
-          <div className="flex flex-col gap-3">
-            {status && <Banner tone={status.tone}>{status.message}</Banner>}
-            <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
-              {generating ? 'Generating…' : 'Generate PDF Certificate'}
-            </PrimaryButton>
-          </div>
-        </Card>
+        {!hideActions && (
+          <Card>
+            <div className="flex flex-col gap-3">
+              {status && <Banner tone={status.tone}>{status.message}</Banner>}
+              <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
+                {generating ? 'Generating…' : 'Generate PDF Certificate'}
+              </PrimaryButton>
+            </div>
+          </Card>
+        )}
+        {hideActions && status && (
+          <Card>
+            <Banner tone={status.tone}>{status.message}</Banner>
+          </Card>
+        )}
       </div>
     </div>
   )
-}
+})
 
 function CertificatePreviewTiles({ type, preview }) {
   const tiles = useMemo(() => {

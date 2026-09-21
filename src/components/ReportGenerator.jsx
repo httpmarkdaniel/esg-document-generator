@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
 import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import { emptyReportForm, emptyAssetCategoryRow, validateReportForm } from '../reports/reportData.js'
 import { buildEsgReportData } from '../reports/reportAggregator.js'
-import { generateReportDocx } from '../reports/generateReportDocx.js'
+import { generateReportPdf } from '../reports/generateReportPdf.js'
 import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
+import { getRrSummariesInRange } from '../rrData/rrClient.js'
 
 /** True when an asset-category row has nothing entered yet. */
 function isBlankRow(row) {
@@ -29,6 +30,28 @@ function rowFromCalculation({ input, result }, index) {
   }
 }
 
+/**
+ * Build an asset-category row directly from an RR sheet summary. The sheet
+ * has no material-split/carbon/water/energy data, so only weight-based
+ * fields are filled — carbon/water/energy are left blank for manual entry
+ * (or via the Calculator), never invented.
+ */
+function rowFromRrSummary(summary) {
+  return {
+    item: `RR ${summary.referenceNo} — ${summary.accountName}`,
+    qtyKg: String(summary.totalNetWeight),
+    metalKg: '',
+    plasticKg: '',
+    glassKg: '',
+    electronicsKg: '',
+    carbonFootprintKgCO2e: '',
+    recycledEmissionsKgCO2e: '',
+    waterSavedLiters: '',
+    energySavedKwh: '',
+    landfillAvertedKg: String(summary.totalNetWeight),
+  }
+}
+
 const ROW_FIELDS = [
   ['item', 'Asset Category', 'text'],
   ['qtyKg', 'Qty (kg)', 'number'],
@@ -43,7 +66,7 @@ const ROW_FIELDS = [
   ['landfillAvertedKg', 'Landfill Averted (kg)', 'number'],
 ]
 
-export function ReportGenerator({ rowToAdd, onRowConsumed } = {}) {
+export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, onRowConsumed, hideActions = false }, ref) {
   const [form, setForm] = useState({
     ...emptyReportForm(),
     reportIssueDate: todayIso(),
@@ -52,6 +75,11 @@ export function ReportGenerator({ rowToAdd, onRowConsumed } = {}) {
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
+
+  const [rrRangeStart, setRrRangeStart] = useState('')
+  const [rrRangeEnd, setRrRangeEnd] = useState('')
+  const [rrLoading, setRrLoading] = useState(false)
+  const [rrError, setRrError] = useState(null)
 
   // Apply a calculation handed over from the Impact Calculator tab as a new
   // asset-category row. The calculator is the source of truth for these
@@ -88,29 +116,71 @@ export function ReportGenerator({ rowToAdd, onRowConsumed } = {}) {
     setForm((f) => ({ ...f, rows: f.rows.filter((_, i) => i !== index) }))
   }
 
+  async function handleLoadRrRange() {
+    if (!rrRangeStart || !rrRangeEnd) {
+      setRrError('Pick both a start and end date.')
+      return
+    }
+    setRrLoading(true)
+    setRrError(null)
+    try {
+      const summaries = await getRrSummariesInRange(rrRangeStart, rrRangeEnd)
+      if (!summaries.length) {
+        setRrError('No RRs found received in that date range.')
+        return
+      }
+      const newRows = summaries.map(rowFromRrSummary)
+      setForm((f) => {
+        const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
+        return {
+          ...f,
+          collectionDateRange: f.collectionDateRange || `${rrRangeStart} to ${rrRangeEnd}`,
+          rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows],
+        }
+      })
+      setStatus({
+        tone: 'success',
+        message: `Loaded ${summaries.length} RR(s) received ${rrRangeStart} to ${rrRangeEnd}. Carbon/water/energy weren't in the sheet — fill those in manually or via the Calculator.`,
+      })
+    } catch (err) {
+      setRrError(err.message)
+    } finally {
+      setRrLoading(false)
+    }
+  }
+
   const preview = useMemo(() => buildEsgReportData(form), [form])
 
-  async function handleGenerate() {
+  /** Validate + build the PDF. Returns { ok:true, blob, filename } or { ok:false }. Never auto-downloads. */
+  async function buildReport() {
     const validationErrors = validateReportForm(form)
     setErrors(validationErrors)
     if (Object.keys(validationErrors).length) {
       setStatus({ tone: 'error', message: 'Fix the highlighted fields before generating the report.' })
-      return
+      return { ok: false }
     }
-
-    setGenerating(true)
-    setStatus(null)
     try {
       const data = buildEsgReportData(form)
-      const { blob, filename } = await generateReportDocx(data)
-      downloadBlob(blob, filename)
-      setStatus({ tone: 'success', message: `Report generated: ${filename}` })
+      const { blob, filename } = await generateReportPdf(data)
+      return { ok: true, blob, filename }
     } catch (err) {
       console.error(err)
-      setStatus({ tone: 'error', message: 'Something went wrong generating the Word report. Please try again.' })
-    } finally {
-      setGenerating(false)
+      setStatus({ tone: 'error', message: 'Something went wrong generating the report PDF. Please try again.' })
+      return { ok: false }
     }
+  }
+
+  useImperativeHandle(ref, () => ({ generate: buildReport }))
+
+  async function handleGenerate() {
+    setGenerating(true)
+    setStatus(null)
+    const result = await buildReport()
+    if (result.ok) {
+      downloadBlob(result.blob, result.filename)
+      setStatus({ tone: 'success', message: `Report generated: ${result.filename}` })
+    }
+    setGenerating(false)
   }
 
   return (
@@ -156,6 +226,27 @@ export function ReportGenerator({ rowToAdd, onRowConsumed } = {}) {
               </FormField>
             </div>
           </div>
+        </Card>
+
+        <Card title="Load from Receiving Reports" subtitle="Pull every RR received in a date range straight from the Google Sheet.">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <FormField label="Received From">
+              <TextInput type="date" value={rrRangeStart} onChange={(e) => setRrRangeStart(e.target.value)} />
+            </FormField>
+            <FormField label="Received To">
+              <TextInput type="date" value={rrRangeEnd} onChange={(e) => setRrRangeEnd(e.target.value)} />
+            </FormField>
+            <div className="flex items-end">
+              <PrimaryButton type="button" onClick={handleLoadRrRange} loading={rrLoading} className="w-full">
+                {rrLoading ? 'Loading…' : 'Load RRs in range'}
+              </PrimaryButton>
+            </div>
+          </div>
+          {rrError && (
+            <div className="mt-2">
+              <Banner tone="error">{rrError}</Banner>
+            </div>
+          )}
         </Card>
 
         <Card title="Detailed Impact Breakdown" subtitle="One row per asset category — matches Table 1 of the client template.">
@@ -241,18 +332,25 @@ export function ReportGenerator({ rowToAdd, onRowConsumed } = {}) {
           </div>
         </Card>
 
-        <Card>
-          <div className="flex flex-col gap-3">
-            {status && <Banner tone={status.tone}>{status.message}</Banner>}
-            <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
-              {generating ? 'Generating…' : 'Generate Word Report'}
-            </PrimaryButton>
-          </div>
-        </Card>
+        {!hideActions && (
+          <Card>
+            <div className="flex flex-col gap-3">
+              {status && <Banner tone={status.tone}>{status.message}</Banner>}
+              <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
+                {generating ? 'Generating…' : 'Generate PDF Report'}
+              </PrimaryButton>
+            </div>
+          </Card>
+        )}
+        {hideActions && status && (
+          <Card>
+            <Banner tone={status.tone}>{status.message}</Banner>
+          </Card>
+        )}
       </div>
     </div>
   )
-}
+})
 
 function Row({ label, value }) {
   return (
