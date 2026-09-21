@@ -11,7 +11,7 @@ import { generateCertificatePdf } from '../certificate/generateCertificatePdf.js
 import { CERTIFICATE_TYPE_LIST } from '../lib/brand.js'
 import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
-import { getRrNumbers, getRrSummary } from '../rrData/rrClient.js'
+import { getRrNumbers, getRrSummary, getRrSummariesInRange } from '../rrData/rrClient.js'
 
 export const CertificateGenerator = forwardRef(function CertificateGenerator({ prefillCalculation, onPrefillConsumed, hideActions = false }, ref) {
   const [form, setForm] = useState({ ...emptyCertificateForm(), periodStart: todayIso(), periodEnd: todayIso(), givenDate: todayIso() })
@@ -25,11 +25,37 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
   const [rrSummary, setRrSummary] = useState(null)
   const [rrError, setRrError] = useState(null)
 
+  const [rrRangeStart, setRrRangeStart] = useState('')
+  const [rrRangeEnd, setRrRangeEnd] = useState('')
+  const [rrRangeLoading, setRrRangeLoading] = useState(false)
+  const [rrRangeError, setRrRangeError] = useState(null)
+  const [rrFilteredNumbers, setRrFilteredNumbers] = useState(null) // null = no filter (show all)
+
   useEffect(() => {
     getRrNumbers()
       .then(setRrNumbers)
       .catch((err) => setRrError(err.message))
   }, [])
+
+  async function handleLoadRrRange() {
+    if (!rrRangeStart || !rrRangeEnd) {
+      setRrRangeError('Pick both a start and end date.')
+      return
+    }
+    setRrRangeLoading(true)
+    setRrRangeError(null)
+    try {
+      const summaries = await getRrSummariesInRange(rrRangeStart, rrRangeEnd)
+      setRrFilteredNumbers(summaries.map((s) => s.referenceNo))
+      if (!summaries.length) setRrRangeError('No RRs found received in that date range.')
+    } catch (err) {
+      setRrRangeError(err.message)
+    } finally {
+      setRrRangeLoading(false)
+    }
+  }
+
+  const rrOptionList = rrFilteredNumbers ?? rrNumbers
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — never re-derive
@@ -73,7 +99,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
 
   async function handleRrSelect(referenceNo) {
     setRrInput(referenceNo)
-    if (!rrNumbers.includes(referenceNo)) {
+    if (!rrOptionList.includes(referenceNo)) {
       setRrSummary(null)
       return
     }
@@ -157,9 +183,44 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
       </Card>
 
       <Card title="Load from Receiving Report" subtitle="Source of truth: the RR consolidation Google Sheet. Autofills recipient/address/weight only.">
+        <div className="mb-4 border-b border-gray-100 pb-4">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Load from Receiving Reports</div>
+          <p className="mb-2 text-xs text-gray-400">Pull every RR received in a date range straight from the Google Sheet, to narrow the RR Number list below.</p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <FormField label="Received From">
+              <TextInput type="date" value={rrRangeStart} onChange={(e) => setRrRangeStart(e.target.value)} />
+            </FormField>
+            <FormField label="Received To">
+              <TextInput type="date" value={rrRangeEnd} onChange={(e) => setRrRangeEnd(e.target.value)} />
+            </FormField>
+            <div className="flex items-end">
+              <PrimaryButton type="button" onClick={handleLoadRrRange} loading={rrRangeLoading} className="w-full">
+                {rrRangeLoading ? 'Loading…' : 'Load RRs in range'}
+              </PrimaryButton>
+            </div>
+          </div>
+          {rrRangeError && (
+            <div className="mt-2">
+              <Banner tone="error">{rrRangeError}</Banner>
+            </div>
+          )}
+          {rrFilteredNumbers && !rrRangeError && (
+            <p className="mt-2 text-xs text-gray-400">
+              Showing {rrFilteredNumbers.length} RR(s) received {rrRangeStart} to {rrRangeEnd}.{' '}
+              <button
+                type="button"
+                onClick={() => setRrFilteredNumbers(null)}
+                className="font-medium text-emerald-700 hover:underline"
+              >
+                Clear filter
+              </button>
+            </p>
+          )}
+        </div>
+
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="flex-1">
-            <FormField label="RR Number" hint={rrNumbers.length ? `${rrNumbers.length} RR numbers available` : 'Loading…'}>
+            <FormField label="RR Number" hint={rrOptionList.length ? `${rrOptionList.length} RR number(s) available` : 'Loading…'}>
               <TextInput
                 list="rr-number-options"
                 value={rrInput}
@@ -167,7 +228,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
                 placeholder="Start typing an RR number, e.g. S18516"
               />
               <datalist id="rr-number-options">
-                {rrNumbers.map((rr) => (
+                {rrOptionList.map((rr) => (
                   <option key={rr} value={rr} />
                 ))}
               </datalist>
