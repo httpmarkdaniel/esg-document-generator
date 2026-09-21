@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import { emptyReportForm, emptyAssetCategoryRow, validateReportForm } from '../reports/reportData.js'
@@ -6,6 +6,28 @@ import { buildEsgReportData } from '../reports/reportAggregator.js'
 import { generateReportDocx } from '../reports/generateReportDocx.js'
 import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
+
+/** True when an asset-category row has nothing entered yet. */
+function isBlankRow(row) {
+  return Object.values(row).every((v) => v === '' || v === undefined)
+}
+
+/** Build an asset-category row directly from a calculator result — never re-derive the numbers. */
+function rowFromCalculation({ input, result }, index) {
+  return {
+    item: input.description?.trim() || `Asset Category ${index}`,
+    qtyKg: String(result.netWeightKg),
+    metalKg: String(result.materials.metal.weightKg),
+    plasticKg: String(result.materials.plastic.weightKg),
+    glassKg: String(result.materials.glass.weightKg),
+    electronicsKg: String(result.materials.electronics.weightKg),
+    carbonFootprintKgCO2e: String(result.totalCarbonFootprintKgCO2e),
+    recycledEmissionsKgCO2e: String(result.recycledEmissionsKgCO2e),
+    waterSavedLiters: String(result.waterSavedLiters),
+    energySavedKwh: String(result.energySavedKwh),
+    landfillAvertedKg: String(result.landfillAvertedKg),
+  }
+}
 
 const ROW_FIELDS = [
   ['item', 'Asset Category', 'text'],
@@ -21,7 +43,7 @@ const ROW_FIELDS = [
   ['landfillAvertedKg', 'Landfill Averted (kg)', 'number'],
 ]
 
-export function ReportGenerator() {
+export function ReportGenerator({ rowToAdd, onRowConsumed } = {}) {
   const [form, setForm] = useState({
     ...emptyReportForm(),
     reportIssueDate: todayIso(),
@@ -30,6 +52,21 @@ export function ReportGenerator() {
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
+
+  // Apply a calculation handed over from the Impact Calculator tab as a new
+  // asset-category row. The calculator is the source of truth for these
+  // numbers — never re-derive them here, just carry them across.
+  useEffect(() => {
+    if (!rowToAdd) return
+    setForm((f) => {
+      const newRow = rowFromCalculation(rowToAdd, f.rows.length + 1)
+      const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
+      return { ...f, rows: onlyRowIsBlank ? [newRow] : [...f.rows, newRow] }
+    })
+    setStatus({ tone: 'success', message: 'Calculation added as a new asset category row.' })
+    onRowConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowToAdd])
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }))

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, PrimaryButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import {
@@ -12,11 +12,37 @@ import { CERTIFICATE_TYPE_LIST } from '../lib/brand.js'
 import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
 
-export function CertificateGenerator() {
+export function CertificateGenerator({ prefillCalculation, onPrefillConsumed } = {}) {
   const [form, setForm] = useState({ ...emptyCertificateForm(), periodStart: todayIso(), periodEnd: todayIso(), givenDate: todayIso() })
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
+
+  // Apply a calculation handed over from the Impact Calculator tab. The
+  // calculator is the source of truth for these numbers — never re-derive
+  // them here, just carry them across.
+  useEffect(() => {
+    if (!prefillCalculation) return
+    const { result } = prefillCalculation
+    setForm((f) => ({
+      ...f,
+      materialsCollectedKg: String(result.netWeightKg),
+      landfillDivertedKg: String(result.landfillAvertedKg),
+      totalCarbonFootprintKgCO2e: String(result.totalCarbonFootprintKgCO2e),
+      recycledEmissionsKgCO2e: String(result.recycledEmissionsKgCO2e),
+      waterSavedLiters: String(result.waterSavedLiters),
+      energySavedKwh: String(result.energySavedKwh),
+      materials: {
+        metalKg: String(result.materials.metal.weightKg),
+        plasticKg: String(result.materials.plastic.weightKg),
+        glassKg: String(result.materials.glass.weightKg),
+        electronicsKg: String(result.materials.electronics.weightKg),
+      },
+    }))
+    setStatus({ tone: 'success', message: 'Calculation applied from the Impact Calculator.' })
+    onPrefillConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillCalculation])
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }))

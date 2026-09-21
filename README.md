@@ -1,8 +1,11 @@
 # ESG Document Generator
 
-A standalone tool for generating EnviroCycle ESG documents directly from
-manually entered values — no calculator, database, or other app required:
+A tool with three tabs:
 
+0. **Impact Calculator** → enter weight + material split, get carbon/water/
+   energy/landfill results — reproduces the real "ESG Impact Calculator.html"
+   exactly (same factors, same math). This is the source of truth for every
+   number in the other two tabs.
 1. **Certificates** → PDF, one of 4 types, each matching a real EnviroCycle template:
    - Environmental Impact Certificate (`EIC-YYYY-####`)
    - Carbon Abatement Certificate (`CAC-YYYY-####`)
@@ -11,6 +14,13 @@ manually entered values — no calculator, database, or other app required:
 2. **Carbon Abatement Report** → Word `.docx`, aggregated from asset-category
    line items over a reporting period, matching the real
    "Carbon Abatement - Client Template.pdf".
+
+"Use in Certificate" / "Add to Report" on the Calculator tab carries a
+computed result straight into the other tabs' forms — values never need to
+be retyped, and the certificate/report code never re-derives ESG math itself
+(see `src/calculator/calculatorEngine.js`). Manual entry still works too, for
+values that didn't come from the calculator (e.g. Recycled Plastics figures,
+which the calculator doesn't cover).
 
 ## Running it
 
@@ -23,7 +33,16 @@ npm run build    # production build to dist/
 ## How it works
 
 ```
-Form input (React)
+Impact Calculator (weight + material split)
+      │
+      ▼
+calculatorEngine.calculateImpact()  ← single source of truth for ESG math
+      │
+      ├─ "Use in Certificate" ──► prefills Certificate form
+      │
+      └─ "Add to Report" ──► appends a Report asset-category row
+
+Form input (React, calculator-derived or typed by hand)
       │
       ▼
 normalize / validate data
@@ -33,6 +52,19 @@ normalize / validate data
       │
       └── Report ──► reportData.js ──► reportAggregator.js (→ ESGReportData) ──► reportTemplate.js ──► generateReportDocx.js ──► DOCX
 ```
+
+- **`src/calculator/`** — the ESG math, reverse-engineered from the real
+  calculator's rendered breakdown table (its JS bundle wasn't included in
+  the saved HTML, but the factors and formulas are fully spelled out on the
+  page itself — verified to reproduce its example output exactly).
+  - `calculatorEngine.js` — pure `calculateImpact({ grossKg, tareKg, split })`
+    function + the factor constants (primary emission factors per material,
+    the 20%-of-primary recycling-factor rule, 200 L/kg water, 30 kWh/kg
+    energy, 100% landfill diversion). **This is the only file that should
+    ever contain ESG formulas** — certificate/report code must consume its
+    output, never recompute.
+  - `calculatorForm.js` — form defaults + validation (net weight > 0,
+    material split sums to 100%).
 
 - **`src/lib/brand.js`** — shared brand constants: company info, colors,
   the 3 fixed signatories, the 4 certificate types (prefix/title/
@@ -73,11 +105,13 @@ normalize / validate data
   - `generateReportDocx.js` — wires `ESGReportData` into the template and
     returns a downloadable `Blob` via the `docx` library's `Packer`.
 
-- **`src/components/`** — the UI: `CertificateGenerator.jsx` (type
-  selector + dynamic fields per type + live preview) and
-  `ReportGenerator.jsx` (client fields + editable asset-category table +
-  live totals), under `pages/ESGDocumentsPage.jsx` (Certificate / ESG
-  Report tabs).
+- **`src/components/`** — the UI: `CalculatorPanel.jsx` (inputs + live
+  results + breakdown table, matching the real calculator), plus
+  `CertificateGenerator.jsx` (type selector + dynamic fields per type +
+  live preview) and `ReportGenerator.jsx` (client fields + editable
+  asset-category table + live totals) — both accept a prefill/row prop
+  that `pages/ESGDocumentsPage.jsx` sets when the Calculator hands off a
+  result. (Impact Calculator / Certificate / ESG Report tabs.)
 
 ## Replacing the templates later
 
