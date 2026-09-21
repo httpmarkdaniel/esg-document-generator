@@ -47,6 +47,9 @@ function rowFromRrSummary(summary) {
     plasticKg: String(summary.materialsKg.plasticKg),
     glassKg: String(summary.materialsKg.glassKg),
     electronicsKg: String(summary.materialsKg.electronicsKg),
+    // Not a form field — carried alongside the row purely so the table can
+    // flag item types the material catalog didn't cover. Never sent to the PDF.
+    unmatchedItemTypes: summary.unmatchedItemTypes,
   }
 }
 
@@ -300,6 +303,12 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
                             onChange={(e) => setRow(i, key, e.target.value)}
                             className="min-w-[90px]"
                           />
+                          {key === 'item' && row.unmatchedItemTypes?.length > 0 && (
+                            <p className="mt-1 max-w-[220px] text-[11px] font-medium text-amber-700">
+                              Not found in catalog, please input manually — {row.unmatchedItemTypes.slice(0, 3).join(', ')}
+                              {row.unmatchedItemTypes.length > 3 ? ', …' : ''}
+                            </p>
+                          )}
                         </td>
                       ))}
                       {COMPUTED_COLUMNS.map(([key, , format]) => (

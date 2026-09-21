@@ -335,6 +335,12 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
               <div className="border-t border-gray-100 pt-4">
                 <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Material Breakdown</div>
                 {errors.materialsBreakdown && <p className="mb-2 text-xs text-red-600">{errors.materialsBreakdown}</p>}
+                {rrSummary && rrSummary.unmatchedItemTypes.length > 0 && (
+                  <p className="mb-2 text-xs font-medium text-amber-700">
+                    Not found in catalog, please input manually — {rrSummary.unmatchedItemTypes.slice(0, 6).join(', ')}
+                    {rrSummary.unmatchedItemTypes.length > 6 ? ', …' : ''}
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
                     ['metalKg', 'Metal (kg)'],
