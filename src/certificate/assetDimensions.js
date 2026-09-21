@@ -5,7 +5,7 @@
 // logic.
 export const ASSET_DIMENSIONS = {
   logo: { width: 1000, height: 200 },
-  complianceStrip: { width: 2400, height: 80 },
+  complianceStrip: { width: 2400, height: 158 },
   iconTree: { width: 172, height: 200 },
   iconEnergy: { width: 158, height: 200 },
   iconRecycle: { width: 200, height: 195 },

@@ -15,7 +15,42 @@ import { COMPANY, BRAND, SIGNATORIES, CERTIFICATE_TYPES, CERTIFICATE_DISCLAIMER,
 import { ASSET_DIMENSIONS } from './assetDimensions.js'
 
 const MARGIN = 14
-const HEADER_HEIGHT = 34
+const HEADER_HEIGHT = 37
+
+// Exact header diagonal geometry, extracted from the reference PDF's own
+// vector paths (page.get_drawings() on "Template ESG Certificates.pdf",
+// converted from PDF points to mm at 1pt = 0.352778mm). Each colored
+// triangle sits in front of a slightly larger "shadow" triangle of the
+// same shape, offset down/outward, which is what gives the diagonal its
+// layered/beveled look instead of a flat two-triangle split.
+const HEADER_SHADOW_COLOR = [231, 231, 231]
+const HEADER_SHAPES = {
+  limeShadow: [
+    [23.82, 0],
+    [296.75, 0],
+    [296.75, 36.88],
+  ],
+  lime: [
+    [39.28, 0],
+    [296.75, 0],
+    [296.75, 34.8],
+  ],
+  navyShadow: [
+    [0.42, 0],
+    [0.42, 37.05],
+    [274.46, 0],
+  ],
+  navy: [
+    [0.42, 0],
+    [0.42, 34.8],
+    [257.86, 0],
+  ],
+}
+// Real logo placement from the reference PDF (page.get_image_info()), also
+// converted pt -> mm: x 27.2mm, y 8.37mm, width 62.7mm, height 12.4mm.
+const LOGO_X = 27.2
+const LOGO_Y = 8.4
+const LOGO_WIDTH = 62.7
 
 function withAlpha(doc, alpha, fn) {
   doc.saveGraphicsState()
@@ -35,22 +70,30 @@ function drawAsset(doc, assets, key, x, y, targetWidth, align = 'left') {
   return h
 }
 
-/** Navy/lime diagonal header band shared by all certificate types. */
+function drawHeaderShape(doc, key, color) {
+  const [[x1, y1], [x2, y2], [x3, y3]] = HEADER_SHAPES[key]
+  doc.setFillColor(...color)
+  doc.triangle(x1, y1, x2, y2, x3, y3, 'F')
+}
+
+/** Navy/lime diagonal header band shared by all certificate types, matching the reference PDF's exact vector shapes. */
 function drawHeader(doc, assets, { certificateNumber, title }) {
   const pageWidth = doc.internal.pageSize.getWidth()
 
-  doc.setFillColor(...BRAND.navy)
-  doc.triangle(0, 0, pageWidth, 0, 0, HEADER_HEIGHT - 14, 'F')
-  doc.setFillColor(...BRAND.lime)
-  doc.triangle(0, HEADER_HEIGHT - 14, pageWidth, 0, pageWidth, HEADER_HEIGHT, 'F')
+  // Draw order matches the reference PDF's own paint order: lime's shadow,
+  // then lime, then navy's shadow, then navy (navy in front).
+  drawHeaderShape(doc, 'limeShadow', HEADER_SHADOW_COLOR)
+  drawHeaderShape(doc, 'lime', BRAND.lime)
+  drawHeaderShape(doc, 'navyShadow', HEADER_SHADOW_COLOR)
+  drawHeaderShape(doc, 'navy', BRAND.navy)
 
-  // Real EnviroCycle wordmark, extracted from the reference certificate PDF.
-  drawAsset(doc, assets, 'logo', MARGIN, 6, 46)
+  // Real EnviroCycle wordmark, at its real size/position from the reference certificate PDF.
+  drawAsset(doc, assets, 'logo', LOGO_X, LOGO_Y, LOGO_WIDTH)
 
   doc.setFont('Poppins', 'normal')
   doc.setFontSize(9.5)
   doc.setTextColor(...BRAND.navy)
-  doc.text(`Certificate No. ${toText(certificateNumber)}`, pageWidth - MARGIN, 12, { align: 'right' })
+  doc.text(`Certificate No. ${toText(certificateNumber)}`, pageWidth - MARGIN, 15, { align: 'right' })
 
   let y = HEADER_HEIGHT + 14
   doc.setTextColor(...BRAND.green)

@@ -35,16 +35,34 @@ Envirocycle's RR consolidation Google Sheet instead of manual entry:
 
 - **Certificate**: a date-range loader narrows an RR-number picker
   (typeahead, otherwise over all ~1,725 RR reference numbers); selecting one
-  autofills recipient, address, and net-weight fields from that RR's line
-  items — **and adds the same RR as a row on the Report tab**, even though
-  they're separate tabs.
+  autofills recipient, address, net-weight, **and material breakdown**
+  fields from that RR's line items — **and adds the same RR as a row on the
+  Report tab**, even though they're separate tabs.
 - **Report**: a received-date range loads every RR in that window as its
-  own asset-category row (weight only).
+  own asset-category row (weight + material breakdown), one row per RR
+  regardless of how many line items that RR actually has internally — the
+  per-item aggregation (see below) happens before it becomes a row, so a
+  large RR never blows up the table.
 
-The sheet has **no material-split (metal/plastic/glass/electronics) data**
-— only weight and a waste-handling category — so that part genuinely has to
-be typed in (or pulled from the Calculator). Everything else is computed,
-never separately entered:
+The RR sheet itself has **no material-split (metal/plastic/glass/
+electronics) data** — only weight, ITEM TYPE, and a waste-handling
+category. That gap is filled by a second Google Sheet: a **material split
+catalog** (`api/material-catalog.js` proxies it, same pattern as the RR
+sheet) mapping ~65 canonical item types (with citations — EU JRC WEEE, EPA
+WARM, UNU Guidelines, OEM teardown data) to a Metal/Plastic/Glass/
+Electronics %. `src/rrData/materialCatalogClient.js` matches each RR line
+item's free-text ITEM TYPE against the catalog's names/aliases (exact
+match first, then a word-boundary substring match in catalog order), and
+`rrClient.js`'s `aggregateMaterials()` sums `netWeight × matched split %`
+across every item in an RR to get that RR's material breakdown in KG.
+Item types the catalog doesn't recognize simply contribute 0 — never an
+invented split — and `materialsMatchedFraction` tells the caller (and the
+UI status message) how much of the total weight the breakdown actually
+covers, so partial coverage on a large/varied RR is visible, not silent.
+
+Once material breakdown is filled in (via the catalog match, the
+Calculator, or by hand), everything else is computed, never separately
+entered:
 
 - **Water Saved / Energy Saved / Landfill Averted** depend only on net
   weight (200 L/kg, 30 kWh/kg, 100% diversion) — so these fill in
@@ -55,8 +73,9 @@ never separately entered:
   type.
 
 See `src/calculator/calculatorEngine.js`'s `calculateCarbonFromMaterialWeights`
-/ `calculateSavingsFromNetWeight` (the only two places these formulas live)
-and `api/rr-data.js` for the sheet's exact column mapping.
+/ `calculateSavingsFromNetWeight` (the only two places these formulas live),
+`api/rr-data.js` for the RR sheet's exact column mapping, and
+`api/material-catalog.js` for the material catalog's.
 
 ## Running it
 
@@ -179,12 +198,20 @@ references via `/SMask`) — rather than redrawn from scratch:
 
 - **`src/assets/certificate/`** (from `Template ESG Certificates.pdf`): the
   logo, tree/energy/recycle tile icons, and a compliance-logo strip
-  composited from that PDF's individual badge images (its order is close
-  to, but not pixel-identical to, the source's row — they were composited
-  fresh rather than cropped in place). Two tile icons (CO2, water-drop)
-  aren't embedded as raster images in that PDF — they're vector-drawn
-  directly — so `certificateTemplate.js`'s `drawVectorIcon()` approximates
-  them instead. Loaded via `src/certificate/assets.js`.
+  composited from that PDF's 18 individual badge images at their **exact
+  relative positions/sizes** (`page.get_image_info()` gives each badge's
+  bbox; the composite scales all of them into one strip preserving those
+  relative coordinates — not just placed in reading order with guessed
+  spacing). The header's navy/lime diagonal is similarly exact: its 4
+  triangles (each color plus a lighter "shadow" triangle behind it, offset
+  down/outward — that's what gives the diagonal its beveled look) and the
+  logo's placement rect were extracted from the PDF's own vector paths via
+  `page.get_drawings()`/`get_image_info()`, converted pt → mm, and hardcoded
+  in `certificateTemplate.js` (`HEADER_SHAPES`, `LOGO_X/Y/WIDTH`) rather
+  than approximated. Two tile icons (CO2, water-drop) aren't embedded as
+  raster images in that PDF — they're vector-drawn directly — so
+  `certificateTemplate.js`'s `drawVectorIcon()` approximates them instead.
+  Loaded via `src/certificate/assets.js`.
 - **`src/assets/report/`** (from `Carbon Abatement - Client Template.pdf`):
   that PDF's own pre-composed images — `letterhead.png` (logo + company
   name/address/phone/email/website, all one image), `gradient-bar.png`

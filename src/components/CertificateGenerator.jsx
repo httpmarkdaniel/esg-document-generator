@@ -116,10 +116,21 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
         companyAddress: summary.pickupAddress || summary.billingAddress || f.companyAddress,
         materialsCollectedKg: String(summary.totalNetWeight),
         landfillDivertedKg: String(summary.totalNetWeight),
+        materials: {
+          metalKg: String(summary.materialsKg.metalKg),
+          plasticKg: String(summary.materialsKg.plasticKg),
+          glassKg: String(summary.materialsKg.glassKg),
+          electronicsKg: String(summary.materialsKg.electronicsKg),
+        },
       }))
+      const matchedPct = formatNumber(summary.materialsMatchedFraction * 100, 0)
+      const coverageNote =
+        summary.materialsMatchedFraction >= 0.999
+          ? 'Material Breakdown auto-filled from the material split catalog — Carbon now computes automatically too.'
+          : `Material Breakdown auto-filled from the material split catalog for ${matchedPct}% of the weight (by item type) — the rest (${summary.unmatchedItemTypes.slice(0, 3).join(', ') || 'some items'}) isn't in the catalog, so adjust the breakdown if needed.`
       setStatus({
         tone: 'success',
-        message: `Autofilled from RR ${referenceNo} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). Water/Energy are computed from that weight; Carbon needs the Material Breakdown below (the sheet doesn't have material composition) — also added to the Report below.`,
+        message: `Autofilled from RR ${referenceNo} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). ${coverageNote} Also added to the Report.`,
       })
       onRrSelected?.(summary)
     } catch (err) {

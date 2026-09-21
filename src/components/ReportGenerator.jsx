@@ -33,19 +33,20 @@ function rowFromCalculation({ input, result }, index) {
 }
 
 /**
- * The RR sheet has no material-split data, so only item/qtyKg are filled;
- * water/energy/landfill still compute automatically from qtyKg alone (no
- * material breakdown needed for those), carbon stays 0 until the material
- * breakdown is typed in.
+ * The RR sheet itself has no material-split data, but the material split
+ * catalog (matched by ITEM TYPE, see rrClient.js's aggregateMaterials) may
+ * cover some or all of this RR's line items — use whatever it derived.
+ * Uncovered item types simply contribute 0, same as before, rather than an
+ * invented split.
  */
 function rowFromRrSummary(summary) {
   return {
     item: `RR ${summary.referenceNo} — ${summary.accountName}`,
     qtyKg: String(summary.totalNetWeight),
-    metalKg: '',
-    plasticKg: '',
-    glassKg: '',
-    electronicsKg: '',
+    metalKg: String(summary.materialsKg.metalKg),
+    plasticKg: String(summary.materialsKg.plasticKg),
+    glassKg: String(summary.materialsKg.glassKg),
+    electronicsKg: String(summary.materialsKg.electronicsKg),
   }
 }
 
@@ -149,9 +150,12 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
           rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows],
         }
       })
+      const totalWeight = summaries.reduce((s, r) => s + r.totalNetWeight, 0)
+      const matchedWeight = summaries.reduce((s, r) => s + r.materialsMatchedNetWeight, 0)
+      const matchedPct = formatNumber(totalWeight > 0 ? (matchedWeight / totalWeight) * 100 : 0, 0)
       setStatus({
         tone: 'success',
-        message: `Loaded ${summaries.length} RR(s) received ${rrRangeStart} to ${rrRangeEnd}. Water/Energy/Landfill are computed from each row's weight. Carbon needs a Material Breakdown per row — the sheet doesn't have material composition.`,
+        message: `Loaded ${summaries.length} RR(s) received ${rrRangeStart} to ${rrRangeEnd}. Material Breakdown (and Carbon) auto-filled from the material split catalog for ~${matchedPct}% of the total weight by item type — check rows with an uncovered item type and adjust if needed.`,
       })
     } catch (err) {
       setRrError(err.message)
