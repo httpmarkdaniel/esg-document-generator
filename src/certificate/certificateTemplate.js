@@ -99,7 +99,7 @@ function drawFooter(doc, assets, data) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
 
-  let y = pageHeight - 60
+  let y = pageHeight - 68
   doc.setTextColor(...BRAND.ink)
   doc.setFont('Poppins', 'normal')
   doc.setFontSize(9.5)

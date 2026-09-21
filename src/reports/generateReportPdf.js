@@ -5,7 +5,7 @@
 import { jsPDF } from 'jspdf'
 import { drawReportPdf } from './reportPdfTemplate.js'
 import { loadReportAssets } from './assets.js'
-import { slugifyForFilename } from '../lib/download.js'
+import { formalizeForFilename, formalFilename } from '../lib/download.js'
 
 /**
  * @param {import('./reportAggregator.js').buildEsgReportData extends (...a: any) => infer R ? R : never} data
@@ -17,9 +17,11 @@ export async function generateReportPdf(data) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   drawReportPdf(doc, assets, data)
 
-  const client = slugifyForFilename(data.client.name, 'client')
-  const issued = slugifyForFilename(data.reportIssueDate, 'report')
-  const filename = `carbon-abatement-report-${client}-${issued}.pdf`
+  // Formal filename, e.g. "Carbon Abatement Report - Acme Corporation - February 2, 2026.pdf"
+  const filename = formalFilename(
+    [formalizeForFilename(data.report.title, 'Carbon Abatement Report'), formalizeForFilename(data.client.name, 'Client'), formalizeForFilename(data.reportIssueDateLabel)],
+    'pdf',
+  )
   const blob = doc.output('blob')
 
   return { blob, filename }

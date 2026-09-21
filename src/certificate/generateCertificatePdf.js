@@ -7,7 +7,7 @@ import { jsPDF } from 'jspdf'
 import { drawCertificate } from './certificateTemplate.js'
 import { loadCertificateAssets } from './assets.js'
 import { loadPoppinsFonts, registerPoppins } from './fonts.js'
-import { slugifyForFilename } from '../lib/download.js'
+import { formalizeForFilename, formalFilename } from '../lib/download.js'
 import { CERTIFICATE_TYPES } from '../lib/brand.js'
 
 /**
@@ -21,8 +21,9 @@ export async function generateCertificatePdf(data) {
   registerPoppins(doc, fonts)
   drawCertificate(doc, assets, data)
 
-  const typeLabel = CERTIFICATE_TYPES[data.certificateType]?.label || 'certificate'
-  const filename = `${slugifyForFilename(typeLabel, 'certificate')}-${slugifyForFilename(data.certificateNumber, data.certificateType)}.pdf`
+  // Formal filename, e.g. "Environmental Impact Certificate - Acme Corporation - EIC-2026-0001.pdf"
+  const typeLabel = CERTIFICATE_TYPES[data.certificateType]?.label || 'Certificate'
+  const filename = formalFilename([formalizeForFilename(typeLabel), formalizeForFilename(data.recipient, 'Recipient'), formalizeForFilename(data.certificateNumber)], 'pdf')
   const blob = doc.output('blob')
   return { blob, filename }
 }
