@@ -6,16 +6,18 @@
 import { jsPDF } from 'jspdf'
 import { drawCertificate } from './certificateTemplate.js'
 import { slugifyForFilename } from '../lib/download.js'
+import { CERTIFICATE_TYPES } from '../lib/brand.js'
 
 /**
  * @param {import('./certificateData.js').normalizeCertificateData extends (...a: any) => infer R ? R : never} data
  * @returns {{ blob: Blob, filename: string }}
  */
 export function generateCertificatePdf(data) {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   drawCertificate(doc, data)
 
-  const filename = `environmental-impact-certificate-${slugifyForFilename(data.certificateNumber, 'certificate')}.pdf`
+  const typeLabel = CERTIFICATE_TYPES[data.certificateType]?.label || 'certificate'
+  const filename = `${slugifyForFilename(typeLabel, 'certificate')}-${slugifyForFilename(data.certificateNumber, data.certificateType)}.pdf`
   const blob = doc.output('blob')
   return { blob, filename }
 }

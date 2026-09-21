@@ -1,7 +1,6 @@
-import { useState } from 'react'
-import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
+import { useMemo, useState } from 'react'
+import { Card, PrimaryButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
-import { ImpactPreviewGrid } from './ImpactPreviewGrid.jsx'
 import {
   emptyCertificateForm,
   validateCertificateForm,
@@ -9,34 +8,32 @@ import {
   generateCertificateNumber,
 } from '../certificate/certificateData.js'
 import { generateCertificatePdf } from '../certificate/generateCertificatePdf.js'
+import { CERTIFICATE_TYPE_LIST } from '../lib/brand.js'
 import { downloadBlob } from '../lib/download.js'
-import { todayIso } from '../lib/format.js'
+import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
 
 export function CertificateGenerator() {
-  const [form, setForm] = useState({ ...emptyCertificateForm(), calculationDate: todayIso() })
+  const [form, setForm] = useState({ ...emptyCertificateForm(), periodStart: todayIso(), periodEnd: todayIso(), givenDate: todayIso() })
   const [errors, setErrors] = useState({})
-  const [status, setStatus] = useState(null) // { tone, message }
+  const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
 
   function setField(key, value) {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
-  function setMaterial(index, key, value) {
-    setForm((f) => {
-      const materials = [...f.materials]
-      materials[index] = { ...materials[index], [key]: value }
-      return { ...f, materials }
-    })
+  function setMaterial(key, value) {
+    setForm((f) => ({ ...f, materials: { ...f.materials, [key]: value } }))
   }
 
-  function addMaterial() {
-    setForm((f) => ({ ...f, materials: [...f.materials, { material: '', weightKg: '' }] }))
+  function setType(certificateType) {
+    setForm((f) => ({ ...f, certificateType }))
+    setErrors({})
+    setStatus(null)
   }
 
-  function removeMaterial(index) {
-    setForm((f) => ({ ...f, materials: f.materials.filter((_, i) => i !== index) }))
-  }
+  const previewNumber = useMemo(() => generateCertificateNumber(form.certificateType, form), [form])
+  const preview = useMemo(() => normalizeCertificateData(form, { certificateNumber: previewNumber }), [form, previewNumber])
 
   async function handleGenerate() {
     const validationErrors = validateCertificateForm(form)
@@ -49,8 +46,7 @@ export function CertificateGenerator() {
     setGenerating(true)
     setStatus(null)
     try {
-      const certificateNumber = generateCertificateNumber()
-      const data = normalizeCertificateData(form, { certificateNumber })
+      const data = normalizeCertificateData(form, { certificateNumber: previewNumber })
       const { blob, filename } = generateCertificatePdf(data)
       downloadBlob(blob, filename)
       setStatus({ tone: 'success', message: `Certificate generated: ${filename}` })
@@ -62,141 +58,203 @@ export function CertificateGenerator() {
     }
   }
 
+  const type = form.certificateType
+
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
-      <Card title="Certificate Details" subtitle="One certificate covers a single calculation / transaction.">
-        <div className="grid gap-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Recipient" error={errors.recipient}>
-              <TextInput
-                value={form.recipient}
-                onChange={(e) => setField('recipient', e.target.value)}
-                placeholder="Acme Corporation"
-                className={inputErrorClass(errors.recipient)}
-              />
-            </FormField>
-            <FormField label="Reference / Transaction" error={errors.reference}>
-              <TextInput
-                value={form.reference}
-                onChange={(e) => setField('reference', e.target.value)}
-                placeholder="TXN-00123"
-                className={inputErrorClass(errors.reference)}
-              />
-            </FormField>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Item" error={errors.item}>
-              <TextInput
-                value={form.item}
-                onChange={(e) => setField('item', e.target.value)}
-                placeholder="Mixed scrap metal"
-                className={inputErrorClass(errors.item)}
-              />
-            </FormField>
-            <FormField label="Quantity" hint="Optional">
-              <TextInput value={form.quantity} onChange={(e) => setField('quantity', e.target.value)} placeholder="e.g. 12 pallets" />
-            </FormField>
-          </div>
-
-          <FormField label="Calculation Date" error={errors.calculationDate}>
-            <TextInput
-              type="date"
-              value={form.calculationDate}
-              onChange={(e) => setField('calculationDate', e.target.value)}
-              className={inputErrorClass(errors.calculationDate)}
-            />
-          </FormField>
-
-          <div className="border-t border-gray-100 pt-4">
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-500">Environmental Impact</div>
-            {errors.impact && <p className="mb-2 text-xs text-red-600">{errors.impact}</p>}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {[
-                ['netWeightKg', 'Net Weight (kg)'],
-                ['carbonAbatedKgCO2e', 'Carbon Abated (kg CO2e)'],
-                ['waterSavedLiters', 'Water Saved (L)'],
-                ['energySavedKwh', 'Energy Saved (kWh)'],
-                ['landfillAvertedKg', 'Landfill Averted (kg)'],
-              ].map(([key, label]) => (
-                <FormField key={key} label={label}>
-                  <TextInput
-                    type="number"
-                    inputMode="decimal"
-                    value={form[key]}
-                    onChange={(e) => setField(key, e.target.value)}
-                    placeholder="0"
-                  />
-                </FormField>
-              ))}
-            </div>
-          </div>
-
-          <div className="border-t border-gray-100 pt-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Material Composition (optional)</span>
-              <GhostButton type="button" onClick={addMaterial}>
-                + Add material
-              </GhostButton>
-            </div>
-            {form.materials.length === 0 && <p className="text-xs text-gray-400">No materials added.</p>}
-            <div className="grid gap-2">
-              {form.materials.map((m, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <TextInput
-                    value={m.material}
-                    onChange={(e) => setMaterial(i, 'material', e.target.value)}
-                    placeholder="Material (e.g. Aluminum)"
-                    className="flex-1"
-                  />
-                  <TextInput
-                    type="number"
-                    inputMode="decimal"
-                    value={m.weightKg}
-                    onChange={(e) => setMaterial(i, 'weightKg', e.target.value)}
-                    placeholder="Weight (kg)"
-                    className="w-32"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeMaterial(i)}
-                    className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
-                    aria-label="Remove material"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <FormField label="Calculation Methodology / Version" hint="Optional — shown on the certificate footer">
-            <TextInput
-              value={form.methodologyVersion}
-              onChange={(e) => setField('methodologyVersion', e.target.value)}
-              placeholder="e.g. v2.1"
-            />
-          </FormField>
+    <div className="flex flex-col gap-5">
+      <Card title="Certificate Type">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {CERTIFICATE_TYPE_LIST.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setType(t.id)}
+              className={`rounded-lg border px-3 py-2.5 text-left text-sm font-medium transition ${
+                type === t.id
+                  ? 'border-emerald-600 bg-emerald-50 text-emerald-800 ring-1 ring-emerald-600'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              {t.label}
+              <span className="mt-0.5 block text-[11px] font-normal text-gray-400">{t.prefix}-YYYY-####</span>
+            </button>
+          ))}
         </div>
       </Card>
 
-      <div className="flex flex-col gap-5">
-        <Card title="Environmental Impact Preview">
-          <ImpactPreviewGrid
-            netWeightKg={form.netWeightKg}
-            carbonAbatedKgCO2e={form.carbonAbatedKgCO2e}
-            waterSavedLiters={form.waterSavedLiters}
-            energySavedKwh={form.energySavedKwh}
-            landfillAvertedKg={form.landfillAvertedKg}
-          />
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card title="Certificate Details">
+          <div className="grid gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Recipient / Company Name" error={errors.recipient}>
+                <TextInput
+                  value={form.recipient}
+                  onChange={(e) => setField('recipient', e.target.value)}
+                  placeholder="Acme Corporation"
+                  className={inputErrorClass(errors.recipient)}
+                />
+              </FormField>
+              <FormField label="Company Address" hint="Optional">
+                <TextInput value={form.companyAddress} onChange={(e) => setField('companyAddress', e.target.value)} placeholder="City, Country" />
+              </FormField>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              <FormField label="Reporting Period — From" error={errors.periodStart}>
+                <TextInput
+                  type="date"
+                  value={form.periodStart}
+                  onChange={(e) => setField('periodStart', e.target.value)}
+                  className={inputErrorClass(errors.periodStart)}
+                />
+              </FormField>
+              <FormField label="Reporting Period — To" error={errors.periodEnd}>
+                <TextInput
+                  type="date"
+                  value={form.periodEnd}
+                  onChange={(e) => setField('periodEnd', e.target.value)}
+                  className={inputErrorClass(errors.periodEnd)}
+                />
+              </FormField>
+              <FormField label="Certificate Date" error={errors.givenDate} hint='"Given this day, …"'>
+                <TextInput
+                  type="date"
+                  value={form.givenDate}
+                  onChange={(e) => setField('givenDate', e.target.value)}
+                  className={inputErrorClass(errors.givenDate)}
+                />
+              </FormField>
+            </div>
+
+            <FormField label="Certificate Sequence No." hint={`Formats as ${previewNumber}`}>
+              <TextInput type="number" min="1" value={form.sequenceNumber} onChange={(e) => setField('sequenceNumber', e.target.value)} className="w-32" />
+            </FormField>
+
+            {errors.impact && <p className="text-xs text-red-600">{errors.impact}</p>}
+
+            {(type === 'CAC' || type === 'LDC') && (
+              <FormField label="Materials Collected (kg)" error={errors.materialsCollectedKg} hint="Leave blank to auto-sum from material breakdown below">
+                <TextInput
+                  type="number"
+                  inputMode="decimal"
+                  value={form.materialsCollectedKg}
+                  onChange={(e) => setField('materialsCollectedKg', e.target.value)}
+                  className={inputErrorClass(errors.materialsCollectedKg)}
+                />
+              </FormField>
+            )}
+
+            {(type === 'EIC' || type === 'LDC') && (
+              <FormField label="Landfill Diverted (kg)" hint="Leave blank to reuse Materials Collected">
+                <TextInput type="number" inputMode="decimal" value={form.landfillDivertedKg} onChange={(e) => setField('landfillDivertedKg', e.target.value)} />
+              </FormField>
+            )}
+
+            {(type === 'EIC' || type === 'CAC') && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Carbon</div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <FormField
+                    label="Total Carbon Footprint (kg CO2e)"
+                    error={errors.totalCarbonFootprintKgCO2e}
+                    hint="Embodied carbon avoided through recycling"
+                  >
+                    <TextInput
+                      type="number"
+                      inputMode="decimal"
+                      value={form.totalCarbonFootprintKgCO2e}
+                      onChange={(e) => setField('totalCarbonFootprintKgCO2e', e.target.value)}
+                      className={inputErrorClass(errors.totalCarbonFootprintKgCO2e)}
+                    />
+                  </FormField>
+                  <FormField label="Recycled Emissions (kg CO2e)">
+                    <TextInput
+                      type="number"
+                      inputMode="decimal"
+                      value={form.recycledEmissionsKgCO2e}
+                      onChange={(e) => setField('recycledEmissionsKgCO2e', e.target.value)}
+                    />
+                  </FormField>
+                </div>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Net Carbon Abated is derived automatically: {formatUnit(preview.netCarbonAbatedKgCO2e, 'kg CO2e')}
+                </p>
+              </div>
+            )}
+
+            {(type === 'EIC' || type === 'LDC') && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Material Breakdown</div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    ['metalKg', 'Metal (kg)'],
+                    ['plasticKg', 'Plastic (kg)'],
+                    ['glassKg', 'Glass (kg)'],
+                    ['electronicsKg', 'Electronics (kg)'],
+                  ].map(([key, label]) => (
+                    <FormField key={key} label={label}>
+                      <TextInput type="number" inputMode="decimal" value={form.materials[key]} onChange={(e) => setMaterial(key, e.target.value)} />
+                    </FormField>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {type === 'EIC' && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Environmental Savings</div>
+                <div className="grid grid-cols-3 gap-3">
+                  <FormField label="Water Saved (L)">
+                    <TextInput type="number" inputMode="decimal" value={form.waterSavedLiters} onChange={(e) => setField('waterSavedLiters', e.target.value)} />
+                  </FormField>
+                  <FormField label="Energy Saved (kWh)">
+                    <TextInput type="number" inputMode="decimal" value={form.energySavedKwh} onChange={(e) => setField('energySavedKwh', e.target.value)} />
+                  </FormField>
+                  <FormField label="Trees Saved" hint="Optional">
+                    <TextInput type="number" inputMode="decimal" value={form.treesSaved} onChange={(e) => setField('treesSaved', e.target.value)} />
+                  </FormField>
+                </div>
+              </div>
+            )}
+
+            {type === 'RPC' && (
+              <div className="grid gap-4 sm:grid-cols-3">
+                <FormField label="Total Received Volume (kg)" error={errors.totalReceivedVolumeKg}>
+                  <TextInput
+                    type="number"
+                    inputMode="decimal"
+                    value={form.totalReceivedVolumeKg}
+                    onChange={(e) => setField('totalReceivedVolumeKg', e.target.value)}
+                    className={inputErrorClass(errors.totalReceivedVolumeKg)}
+                  />
+                </FormField>
+                <FormField label="Rigid Plastic (kg)" error={errors.rigidPlasticKg}>
+                  <TextInput
+                    type="number"
+                    inputMode="decimal"
+                    value={form.rigidPlasticKg}
+                    onChange={(e) => setField('rigidPlasticKg', e.target.value)}
+                    className={inputErrorClass(errors.rigidPlasticKg)}
+                  />
+                </FormField>
+                <FormField label="Flexible Plastic (kg)">
+                  <TextInput type="number" inputMode="decimal" value={form.flexiblePlasticKg} onChange={(e) => setField('flexiblePlasticKg', e.target.value)} />
+                </FormField>
+                <p className="col-span-full text-xs text-gray-400">Plastic Waste is derived automatically: {formatKg(preview.plasticWasteKg)}</p>
+              </div>
+            )}
+          </div>
         </Card>
 
-        <Card title="Preview Certificate">
+        <Card title="Environmental Impact Preview">
+          <CertificatePreviewTiles type={type} preview={preview} />
+        </Card>
+
+        <Card title={`Preview ${CERTIFICATE_TYPE_LIST.find((t) => t.id === type)?.label ?? 'Certificate'}`}>
           <div className="space-y-1.5 text-sm">
+            <Row label="Certificate No." value={previewNumber} />
             <Row label="Recipient" value={form.recipient} />
-            <Row label="Reference" value={form.reference} />
-            <Row label="Item" value={form.item} />
-            <Row label="Date" value={form.calculationDate} />
+            <Row label="Reporting Period" value={preview.reportingPeriodLabel} />
           </div>
         </Card>
 
@@ -209,6 +267,54 @@ export function CertificateGenerator() {
           </div>
         </Card>
       </div>
+    </div>
+  )
+}
+
+function CertificatePreviewTiles({ type, preview }) {
+  const tiles = useMemo(() => {
+    switch (type) {
+      case 'CAC':
+        return [
+          ['Materials Collected', formatKg(preview.materialsCollectedKg)],
+          ['Total Carbon Footprint', formatUnit(preview.totalCarbonFootprintKgCO2e, 'kg CO2e')],
+          ['Net Carbon Abated', formatUnit(preview.netCarbonAbatedKgCO2e / 1000, 'tCO2e')],
+          ['Recycled Emissions', formatUnit(preview.recycledEmissionsKgCO2e, 'kg CO2e')],
+          ['Carbon Benefits Equivalent', `~${formatNumber(preview.kmAvoided, 0)} km avoided`],
+        ]
+      case 'LDC':
+        return [
+          ['Materials Collected', formatKg(preview.materialsCollectedKg)],
+          ['Landfill Diverted', formatKg(preview.landfillDivertedKg)],
+        ]
+      case 'RPC':
+        return [
+          ['Total Received Volume', formatKg(preview.totalReceivedVolumeKg)],
+          ['Plastic Waste', formatKg(preview.plasticWasteKg)],
+          ['Rigid Plastic', formatKg(preview.rigidPlasticKg)],
+          ['Flexible Plastic', formatKg(preview.flexiblePlasticKg)],
+        ]
+      case 'EIC':
+      default:
+        return [
+          ['Carbon Saved', formatUnit(preview.netCarbonAbatedKgCO2e, 'kg CO2e')],
+          ['Landfill Diverted', formatKg(preview.landfillDivertedKg)],
+          ['Plastic Recycled', formatKg(preview.plasticRecycledKg)],
+          ['Water Saved', formatUnit(preview.waterSavedLiters, 'L', 0)],
+          ['Energy Saved', formatUnit(preview.energySavedKwh, 'kWh')],
+          ...(preview.treesSaved > 0 ? [['Trees Saved', formatNumber(preview.treesSaved, 0)]] : []),
+        ]
+    }
+  }, [type, preview])
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {tiles.map(([label, value]) => (
+        <div key={label} className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/80">{label}</div>
+          <div className="mt-0.5 text-lg font-semibold text-emerald-900">{value}</div>
+        </div>
+      ))}
     </div>
   )
 }

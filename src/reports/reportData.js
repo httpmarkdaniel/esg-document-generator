@@ -1,48 +1,43 @@
-// ESG Report data model.
+// ESG Report data model, matching the real "Carbon Abatement - Client
+// Template.pdf": line items are asset categories, each broken into
+// Metal/Plastic/Glass/Electronics weight plus carbon/water/energy/landfill
+// impact — not simple transactions.
 //
-// ESGReportData is the internal shape that feeds the DOCX generator — it is
-// NOT itself the deliverable (the .docx file is). Keeping it as an explicit
-// shape means reportTemplate.js / generateReportDocx.js can be swapped out
-// for an official template later without touching how report data is
-// collected or aggregated.
+// ESGReportData (built by reportAggregator.js) is the internal shape that
+// feeds the DOCX generator — it is NOT itself the deliverable (the .docx
+// file is).
 
-import { toNumber, toText } from '../lib/format.js'
+import { toText } from '../lib/format.js'
+import { REPORT_TITLE } from './methodology.js'
 
 /** @returns {object} a blank report form's default values */
 export function emptyReportForm() {
   return {
-    title: 'Environmental Impact Report',
-    periodStart: '',
-    periodEnd: '',
-    organization: '',
-    filters: { client: '', vendor: '', project: '', auction: '', branch: '' },
-    transactions: [], // [{ calculationId, reference, date, description, quantity, netWeightKg, carbonAbatedKgCO2e, waterSavedLiters, energySavedKwh, landfillAvertedKg }]
-    materials: [], // [{ material, weightKg }]
-    primaryMaterialEmissionsKgCO2e: '',
-    recyclingEmissionsKgCO2e: '',
-    methodologyVersion: '',
-    methodologySource: '',
-    assumptions: '',
+    title: REPORT_TITLE,
+    clientName: '',
+    clientAddressLine1: '',
+    clientAddressLine2: '',
+    clientCityStateZipCountry: '',
+    collectionDateRange: '',
+    reportIssueDate: '',
+    rows: [],
   }
 }
 
-export function emptyTransactionRow() {
+export function emptyAssetCategoryRow() {
   return {
-    calculationId: '',
-    reference: '',
-    date: '',
-    description: '',
-    quantity: '',
-    netWeightKg: '',
-    carbonAbatedKgCO2e: '',
+    item: '',
+    qtyKg: '',
+    metalKg: '',
+    plasticKg: '',
+    glassKg: '',
+    electronicsKg: '',
+    carbonFootprintKgCO2e: '',
+    recycledEmissionsKgCO2e: '',
     waterSavedLiters: '',
     energySavedKwh: '',
     landfillAvertedKg: '',
   }
-}
-
-export function emptyMaterialRow() {
-  return { material: '', weightKg: '' }
 }
 
 /**
@@ -51,15 +46,12 @@ export function emptyMaterialRow() {
  */
 export function validateReportForm(form) {
   const errors = {}
-  if (!toText(form.periodStart, '').trim()) errors.periodStart = 'Start date is required.'
-  if (!toText(form.periodEnd, '').trim()) errors.periodEnd = 'End date is required.'
-  if (form.periodStart && form.periodEnd && new Date(form.periodStart) > new Date(form.periodEnd)) {
-    errors.periodEnd = 'End date must be on or after the start date.'
-  }
+  if (!toText(form.clientName, '').trim()) errors.clientName = 'Client / company name is required.'
+  if (!toText(form.reportIssueDate, '').trim()) errors.reportIssueDate = 'Report issue date is required.'
 
-  const realTransactions = (form.transactions || []).filter((t) => toText(t.reference, '').trim() || toText(t.description, '').trim())
-  if (!realTransactions.length) {
-    errors.transactions = 'Add at least one transaction for this reporting period.'
+  const realRows = (form.rows || []).filter((r) => toText(r.item, '').trim())
+  if (!realRows.length) {
+    errors.rows = 'Add at least one asset category row for this report.'
   }
 
   return errors

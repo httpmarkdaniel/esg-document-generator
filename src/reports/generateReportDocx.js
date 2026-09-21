@@ -14,9 +14,9 @@ export async function generateReportDocx(data) {
   const doc = buildReportDocument(data)
   const blob = await Packer.toBlob(doc)
 
-  const start = slugifyForFilename(data.report.periodStart, 'start')
-  const end = slugifyForFilename(data.report.periodEnd, 'end')
-  const filename = `environmental-impact-report-${start}-to-${end}.docx`
+  const client = slugifyForFilename(data.client.name, 'client')
+  const issued = slugifyForFilename(data.reportIssueDate, 'report')
+  const filename = `carbon-abatement-report-${client}-${issued}.docx`
 
   return { blob, filename }
 }

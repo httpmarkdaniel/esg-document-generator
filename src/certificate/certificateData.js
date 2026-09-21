@@ -1,87 +1,173 @@
-// Certificate data model: the single source of truth for what a certificate
-// contains. The template/renderer only ever reads from a normalized
-// CertificateData object built by `normalizeCertificateData`.
+// Certificate data model: the single source of truth for what any of the
+// five certificate types contains. Templates only ever read from a
+// normalized CertificateData object built by `normalizeCertificateData`.
 //
 // Keeping this separate from certificateTemplate.js means the visual design
-// can be replaced later (see certificateTemplate.js) without touching how
-// the data is shaped or validated.
+// can be replaced later without touching how the data is shaped, derived,
+// or validated.
 
-import { toNumber, toText } from '../lib/format.js'
+import { toNumber, toText, formatDate } from '../lib/format.js'
+import { CERTIFICATE_TYPES, KM_PER_KG_CO2E } from '../lib/brand.js'
 
-/** @returns {object} a blank certificate form's default values */
+/** @returns {object} a blank certificate form's default values (superset of all 5 types) */
 export function emptyCertificateForm() {
   return {
+    certificateType: 'EIC',
+    sequenceNumber: '1',
     recipient: '',
-    reference: '',
-    item: '',
-    quantity: '',
-    calculationDate: '',
-    netWeightKg: '',
-    carbonAbatedKgCO2e: '',
+    companyAddress: '',
+    periodStart: '',
+    periodEnd: '',
+    givenDate: '',
+    materialsCollectedKg: '',
+    landfillDivertedKg: '',
+    totalCarbonFootprintKgCO2e: '',
+    recycledEmissionsKgCO2e: '',
     waterSavedLiters: '',
     energySavedKwh: '',
-    landfillAvertedKg: '',
-    methodologyVersion: '',
-    materials: [], // [{ material, weightKg }]
+    treesSaved: '',
+    materials: { metalKg: '', plasticKg: '', glassKg: '', electronicsKg: '' },
+    totalReceivedVolumeKg: '',
+    rigidPlasticKg: '',
+    flexiblePlasticKg: '',
   }
 }
 
 /**
- * Validate a certificate form. Returns a map of field -> error message.
- * An empty object means the form is valid.
+ * Validate a certificate form for its selected type. Returns a map of
+ * field -> error message. An empty object means the form is valid.
  */
 export function validateCertificateForm(form) {
   const errors = {}
-  if (!toText(form.recipient, '').trim()) errors.recipient = 'Recipient is required.'
-  if (!toText(form.reference, '').trim()) errors.reference = 'Reference / transaction is required.'
-  if (!toText(form.item, '').trim()) errors.item = 'Item description is required.'
-  if (!toText(form.calculationDate, '').trim()) errors.calculationDate = 'Calculation date is required.'
+  if (!toText(form.recipient, '').trim()) errors.recipient = 'Recipient / company name is required.'
+  if (!toText(form.periodStart, '').trim()) errors.periodStart = 'Reporting period start is required.'
+  if (!toText(form.periodEnd, '').trim()) errors.periodEnd = 'Reporting period end is required.'
+  if (form.periodStart && form.periodEnd && new Date(form.periodStart) > new Date(form.periodEnd)) {
+    errors.periodEnd = 'Period end must be on or after the start date.'
+  }
+  if (!toText(form.givenDate, '').trim()) errors.givenDate = 'Certificate date is required.'
 
-  const hasAnyImpact = [
-    form.netWeightKg,
-    form.carbonAbatedKgCO2e,
-    form.waterSavedLiters,
-    form.energySavedKwh,
-    form.landfillAvertedKg,
-  ].some((v) => toNumber(v) > 0)
-  if (!hasAnyImpact) {
-    errors.impact = 'Enter at least one environmental impact value greater than zero.'
+  switch (form.certificateType) {
+    case 'CAC': {
+      if (toNumber(form.totalCarbonFootprintKgCO2e) <= 0) {
+        errors.totalCarbonFootprintKgCO2e = 'Total carbon footprint is required.'
+      }
+      break
+    }
+    case 'LDC': {
+      const hasMaterials = [form.materials.metalKg, form.materials.plasticKg, form.materials.glassKg, form.materials.electronicsKg].some(
+        (v) => toNumber(v) > 0,
+      )
+      if (toNumber(form.materialsCollectedKg) <= 0 && !hasMaterials) {
+        errors.materialsCollectedKg = 'Enter materials collected or at least one material breakdown value.'
+      }
+      break
+    }
+    case 'RPC': {
+      if (toNumber(form.totalReceivedVolumeKg) <= 0) errors.totalReceivedVolumeKg = 'Total received volume is required.'
+      if (toNumber(form.rigidPlasticKg) <= 0 && toNumber(form.flexiblePlasticKg) <= 0) {
+        errors.rigidPlasticKg = 'Enter rigid and/or flexible plastic weight.'
+      }
+      break
+    }
+    case 'EIC':
+    default: {
+      const hasAnyImpact = [
+        form.landfillDivertedKg,
+        form.totalCarbonFootprintKgCO2e,
+        form.materials.plasticKg,
+        form.waterSavedLiters,
+        form.energySavedKwh,
+      ].some((v) => toNumber(v) > 0)
+      if (!hasAnyImpact) errors.impact = 'Enter at least one environmental impact value greater than zero.'
+      break
+    }
   }
 
   return errors
 }
 
+/** "January to December 2025" / "January to April 2025" / "December 2025" style label. */
+export function formatReportingPeriod(periodStart, periodEnd) {
+  if (!periodStart && !periodEnd) return '—'
+  const start = periodStart ? new Date(periodStart) : null
+  const end = periodEnd ? new Date(periodEnd) : start
+  if (!start || Number.isNaN(start.getTime())) return '—'
+  const startMonth = start.toLocaleDateString('en-US', { month: 'long' })
+  const endMonth = end.toLocaleDateString('en-US', { month: 'long' })
+  const startYear = start.getFullYear()
+  const endYear = end.getFullYear()
+
+  if (startYear === endYear && startMonth === endMonth) return `${startMonth} ${startYear}`
+  if (startYear === endYear) return `${startMonth} to ${endMonth} ${startYear}`
+  return `${startMonth} ${startYear} to ${endMonth} ${endYear}`
+}
+
 /**
- * Normalize a raw certificate form into the clean shape the PDF template
- * consumes. Every numeric field is coerced to a finite number; every text
- * field falls back to an em dash rather than printing "undefined"/"null".
+ * Normalize a raw certificate form into the clean, fully-derived shape the
+ * PDF templates consume. Every numeric field is coerced to a finite number;
+ * every text field falls back to an em dash rather than printing
+ * "undefined"/"null". Net carbon / km-avoided / plastic-waste are always
+ * derived here, never typed by the user, so every template stays consistent.
  */
 export function normalizeCertificateData(form, { certificateNumber } = {}) {
+  const materials = {
+    metalKg: toNumber(form.materials?.metalKg),
+    plasticKg: toNumber(form.materials?.plasticKg),
+    glassKg: toNumber(form.materials?.glassKg),
+    electronicsKg: toNumber(form.materials?.electronicsKg),
+  }
+  const materialsTotalKg = materials.metalKg + materials.plasticKg + materials.glassKg + materials.electronicsKg
+
+  const totalCarbonFootprintKgCO2e = toNumber(form.totalCarbonFootprintKgCO2e)
+  const recycledEmissionsKgCO2e = toNumber(form.recycledEmissionsKgCO2e)
+  const netCarbonAbatedKgCO2e = totalCarbonFootprintKgCO2e - recycledEmissionsKgCO2e
+  const kmAvoided = netCarbonAbatedKgCO2e > 0 ? netCarbonAbatedKgCO2e * KM_PER_KG_CO2E : 0
+
+  const rigidPlasticKg = toNumber(form.rigidPlasticKg)
+  const flexiblePlasticKg = toNumber(form.flexiblePlasticKg)
+
   return {
+    certificateType: form.certificateType,
     certificateNumber: toText(certificateNumber, '—'),
     recipient: toText(form.recipient),
-    reference: toText(form.reference),
-    item: toText(form.item),
-    quantity: toText(form.quantity, ''),
-    calculationDate: form.calculationDate || null,
-    netWeightKg: toNumber(form.netWeightKg),
-    carbonAbatedKgCO2e: toNumber(form.carbonAbatedKgCO2e),
+    companyAddress: toText(form.companyAddress, ''),
+    periodStart: form.periodStart || null,
+    periodEnd: form.periodEnd || null,
+    reportingPeriodLabel: formatReportingPeriod(form.periodStart, form.periodEnd),
+    givenDate: form.givenDate || null,
+    givenDateLabel: formatDate(form.givenDate),
+
+    materialsCollectedKg: toNumber(form.materialsCollectedKg) || materialsTotalKg,
+    landfillDivertedKg: toNumber(form.landfillDivertedKg) || toNumber(form.materialsCollectedKg) || materialsTotalKg,
+
+    totalCarbonFootprintKgCO2e,
+    recycledEmissionsKgCO2e,
+    netCarbonAbatedKgCO2e,
+    kmAvoided,
+
     waterSavedLiters: toNumber(form.waterSavedLiters),
     energySavedKwh: toNumber(form.energySavedKwh),
-    landfillAvertedKg: toNumber(form.landfillAvertedKg),
-    methodologyVersion: toText(form.methodologyVersion, ''),
-    materials: (form.materials || [])
-      .filter((m) => toText(m.material, '').trim())
-      .map((m) => ({ material: toText(m.material), weightKg: toNumber(m.weightKg) })),
+    treesSaved: toNumber(form.treesSaved),
+    plasticRecycledKg: materials.plasticKg,
+
+    materials,
+    materialsTotalKg,
+
+    totalReceivedVolumeKg: toNumber(form.totalReceivedVolumeKg),
+    rigidPlasticKg,
+    flexiblePlasticKg,
+    plasticWasteKg: rigidPlasticKg + flexiblePlasticKg,
+
     generatedAt: new Date().toISOString(),
   }
 }
 
-/** Deterministic-looking certificate number for the temporary template. */
-export function generateCertificateNumber(date = new Date()) {
-  const year = date.getFullYear()
-  const stamp = Math.floor(date.getTime() % 1e6)
-    .toString()
-    .padStart(6, '0')
-  return `ESG-${year}-${stamp}`
+/** Certificate number in the real template's style, e.g. "EIC-2025-0001". */
+export function generateCertificateNumber(certificateType, form) {
+  const type = CERTIFICATE_TYPES[certificateType] || CERTIFICATE_TYPES.EIC
+  const referenceDate = form?.periodEnd || form?.givenDate || new Date().toISOString()
+  const year = new Date(referenceDate).getFullYear() || new Date().getFullYear()
+  const seq = Math.max(1, Math.trunc(toNumber(form?.sequenceNumber) || 1))
+  return `${type.prefix}-${year}-${String(seq).padStart(4, '0')}`
 }

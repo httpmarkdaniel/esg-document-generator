@@ -1,30 +1,31 @@
 import { useMemo, useState } from 'react'
 import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
-import { FormField, TextInput, TextArea, inputErrorClass } from './FormField.jsx'
-import { ImpactPreviewGrid } from './ImpactPreviewGrid.jsx'
-import { emptyReportForm, emptyTransactionRow, emptyMaterialRow, validateReportForm } from '../reports/reportData.js'
+import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
+import { emptyReportForm, emptyAssetCategoryRow, validateReportForm } from '../reports/reportData.js'
 import { buildEsgReportData } from '../reports/reportAggregator.js'
 import { generateReportDocx } from '../reports/generateReportDocx.js'
 import { downloadBlob } from '../lib/download.js'
-import { formatNumber, todayIso } from '../lib/format.js'
+import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
 
-const TXN_FIELDS = [
-  ['date', 'Date', 'date'],
-  ['reference', 'Reference', 'text'],
-  ['description', 'Item / Description', 'text'],
-  ['quantity', 'Qty', 'number'],
-  ['netWeightKg', 'Net Wt (kg)', 'number'],
-  ['carbonAbatedKgCO2e', 'Carbon (kgCO2e)', 'number'],
-  ['waterSavedLiters', 'Water (L)', 'number'],
-  ['energySavedKwh', 'Energy (kWh)', 'number'],
+const ROW_FIELDS = [
+  ['item', 'Asset Category', 'text'],
+  ['qtyKg', 'Qty (kg)', 'number'],
+  ['metalKg', 'Metal (kg)', 'number'],
+  ['plasticKg', 'Plastic (kg)', 'number'],
+  ['glassKg', 'Glass (kg)', 'number'],
+  ['electronicsKg', 'Electronics (kg)', 'number'],
+  ['carbonFootprintKgCO2e', 'Carbon Footprint (kgCO2e)', 'number'],
+  ['recycledEmissionsKgCO2e', 'Recycled Emissions (kgCO2e)', 'number'],
+  ['waterSavedLiters', 'Water Saved (L)', 'number'],
+  ['energySavedKwh', 'Energy Saved (kWh)', 'number'],
+  ['landfillAvertedKg', 'Landfill Averted (kg)', 'number'],
 ]
 
 export function ReportGenerator() {
   const [form, setForm] = useState({
     ...emptyReportForm(),
-    periodStart: todayIso(),
-    periodEnd: todayIso(),
-    transactions: [emptyTransactionRow()],
+    reportIssueDate: todayIso(),
+    rows: [emptyAssetCategoryRow()],
   })
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
@@ -34,40 +35,20 @@ export function ReportGenerator() {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
-  function setFilter(key, value) {
-    setForm((f) => ({ ...f, filters: { ...f.filters, [key]: value } }))
-  }
-
-  function setTransaction(index, key, value) {
+  function setRow(index, key, value) {
     setForm((f) => {
-      const transactions = [...f.transactions]
-      transactions[index] = { ...transactions[index], [key]: value }
-      return { ...f, transactions }
+      const rows = [...f.rows]
+      rows[index] = { ...rows[index], [key]: value }
+      return { ...f, rows }
     })
   }
 
-  function addTransaction() {
-    setForm((f) => ({ ...f, transactions: [...f.transactions, emptyTransactionRow()] }))
+  function addRow() {
+    setForm((f) => ({ ...f, rows: [...f.rows, emptyAssetCategoryRow()] }))
   }
 
-  function removeTransaction(index) {
-    setForm((f) => ({ ...f, transactions: f.transactions.filter((_, i) => i !== index) }))
-  }
-
-  function setMaterial(index, key, value) {
-    setForm((f) => {
-      const materials = [...f.materials]
-      materials[index] = { ...materials[index], [key]: value }
-      return { ...f, materials }
-    })
-  }
-
-  function addMaterial() {
-    setForm((f) => ({ ...f, materials: [...f.materials, emptyMaterialRow()] }))
-  }
-
-  function removeMaterial(index) {
-    setForm((f) => ({ ...f, materials: f.materials.filter((_, i) => i !== index) }))
+  function removeRow(index) {
+    setForm((f) => ({ ...f, rows: f.rows.filter((_, i) => i !== index) }))
   }
 
   const preview = useMemo(() => buildEsgReportData(form), [form])
@@ -98,55 +79,55 @@ export function ReportGenerator() {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="flex flex-col gap-5">
-        <Card title="Report Details" subtitle="A report aggregates multiple calculations / transactions.">
+        <Card title="Report Details" subtitle='Matches the "Carbon Abatement Report" client template.'>
           <div className="grid gap-4">
             <FormField label="Report Title">
               <TextInput value={form.title} onChange={(e) => setField('title', e.target.value)} />
             </FormField>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Reporting Period — From" error={errors.periodStart}>
+              <FormField label="Client / Company Name" error={errors.clientName}>
                 <TextInput
-                  type="date"
-                  value={form.periodStart}
-                  onChange={(e) => setField('periodStart', e.target.value)}
-                  className={inputErrorClass(errors.periodStart)}
+                  value={form.clientName}
+                  onChange={(e) => setField('clientName', e.target.value)}
+                  placeholder="Acme Corporation"
+                  className={inputErrorClass(errors.clientName)}
                 />
               </FormField>
-              <FormField label="Reporting Period — To" error={errors.periodEnd}>
-                <TextInput
-                  type="date"
-                  value={form.periodEnd}
-                  onChange={(e) => setField('periodEnd', e.target.value)}
-                  className={inputErrorClass(errors.periodEnd)}
-                />
+              <FormField label="Client Address Line 1" hint="Optional">
+                <TextInput value={form.clientAddressLine1} onChange={(e) => setField('clientAddressLine1', e.target.value)} />
+              </FormField>
+              <FormField label="Client Address Line 2" hint="Optional">
+                <TextInput value={form.clientAddressLine2} onChange={(e) => setField('clientAddressLine2', e.target.value)} />
+              </FormField>
+              <FormField label="City, Province/State, Postal Code, Country" hint="Optional">
+                <TextInput value={form.clientCityStateZipCountry} onChange={(e) => setField('clientCityStateZipCountry', e.target.value)} />
               </FormField>
             </div>
 
-            <FormField label="Organization / Client" hint="Optional">
-              <TextInput value={form.organization} onChange={(e) => setField('organization', e.target.value)} />
-            </FormField>
-
-            <div className="border-t border-gray-100 pt-4">
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Optional Filters</div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {['client', 'vendor', 'project', 'auction', 'branch'].map((key) => (
-                  <FormField key={key} label={key}>
-                    <TextInput value={form.filters[key]} onChange={(e) => setFilter(key, e.target.value)} />
-                  </FormField>
-                ))}
-              </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Items Collected (date or range)" hint='e.g. "January 2025 - December 2025"'>
+                <TextInput value={form.collectionDateRange} onChange={(e) => setField('collectionDateRange', e.target.value)} />
+              </FormField>
+              <FormField label="Report Issue Date" error={errors.reportIssueDate}>
+                <TextInput
+                  type="date"
+                  value={form.reportIssueDate}
+                  onChange={(e) => setField('reportIssueDate', e.target.value)}
+                  className={inputErrorClass(errors.reportIssueDate)}
+                />
+              </FormField>
             </div>
           </div>
         </Card>
 
-        <Card title="Transactions" subtitle="Each row feeds the aggregated totals and the report's transaction table.">
-          {errors.transactions && <p className="mb-2 text-xs text-red-600">{errors.transactions}</p>}
+        <Card title="Detailed Impact Breakdown" subtitle="One row per asset category — matches Table 1 of the client template.">
+          {errors.rows && <p className="mb-2 text-xs text-red-600">{errors.rows}</p>}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-separate border-spacing-y-1.5 text-sm">
+            <table className="w-full min-w-[1100px] border-separate border-spacing-y-1.5 text-sm">
               <thead>
                 <tr>
-                  {TXN_FIELDS.map(([key, label]) => (
+                  {ROW_FIELDS.map(([key, label]) => (
                     <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
                       {label}
                     </th>
@@ -155,15 +136,15 @@ export function ReportGenerator() {
                 </tr>
               </thead>
               <tbody>
-                {form.transactions.map((t, i) => (
+                {form.rows.map((row, i) => (
                   <tr key={i}>
-                    {TXN_FIELDS.map(([key, , type]) => (
+                    {ROW_FIELDS.map(([key, , type]) => (
                       <td key={key} className="px-1">
                         <TextInput
                           type={type}
                           inputMode={type === 'number' ? 'decimal' : undefined}
-                          value={t[key]}
-                          onChange={(e) => setTransaction(i, key, e.target.value)}
+                          value={row[key]}
+                          onChange={(e) => setRow(i, key, e.target.value)}
                           className="min-w-[90px]"
                         />
                       </td>
@@ -171,9 +152,9 @@ export function ReportGenerator() {
                     <td>
                       <button
                         type="button"
-                        onClick={() => removeTransaction(i)}
+                        onClick={() => removeRow(i)}
                         className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
-                        aria-label="Remove transaction"
+                        aria-label="Remove row"
                       >
                         ✕
                       </button>
@@ -183,94 +164,44 @@ export function ReportGenerator() {
               </tbody>
             </table>
           </div>
-          <GhostButton type="button" onClick={addTransaction} className="mt-2">
-            + Add transaction
+          <GhostButton type="button" onClick={addRow} className="mt-2">
+            + Add asset category
           </GhostButton>
-        </Card>
-
-        <Card title="Material Breakdown" subtitle="Optional — used for the report's material breakdown table.">
-          <div className="grid gap-2">
-            {form.materials.map((m, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <TextInput
-                  value={m.material}
-                  onChange={(e) => setMaterial(i, 'material', e.target.value)}
-                  placeholder="Material (e.g. Plastic)"
-                  className="flex-1"
-                />
-                <TextInput
-                  type="number"
-                  inputMode="decimal"
-                  value={m.weightKg}
-                  onChange={(e) => setMaterial(i, 'weightKg', e.target.value)}
-                  placeholder="Weight (kg)"
-                  className="w-32"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeMaterial(i)}
-                  className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
-                  aria-label="Remove material"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            {form.materials.length === 0 && <p className="text-xs text-gray-400">No materials added.</p>}
-          </div>
-          <GhostButton type="button" onClick={addMaterial} className="mt-2">
-            + Add material
-          </GhostButton>
-        </Card>
-
-        <Card title="Carbon Breakdown & Methodology" subtitle="Optional — improves the Carbon Impact and Methodology sections.">
-          <div className="grid gap-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Primary Material Emissions (kg CO2e)" hint="Optional">
-                <TextInput
-                  type="number"
-                  inputMode="decimal"
-                  value={form.primaryMaterialEmissionsKgCO2e}
-                  onChange={(e) => setField('primaryMaterialEmissionsKgCO2e', e.target.value)}
-                />
-              </FormField>
-              <FormField label="Recycling Emissions (kg CO2e)" hint="Optional">
-                <TextInput
-                  type="number"
-                  inputMode="decimal"
-                  value={form.recyclingEmissionsKgCO2e}
-                  onChange={(e) => setField('recyclingEmissionsKgCO2e', e.target.value)}
-                />
-              </FormField>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Methodology Version" hint="Optional">
-                <TextInput value={form.methodologyVersion} onChange={(e) => setField('methodologyVersion', e.target.value)} />
-              </FormField>
-              <FormField label="Methodology Source" hint="Optional">
-                <TextInput value={form.methodologySource} onChange={(e) => setField('methodologySource', e.target.value)} />
-              </FormField>
-            </div>
-            <FormField label="Assumptions" hint="Optional — one per line">
-              <TextArea rows={3} value={form.assumptions} onChange={(e) => setField('assumptions', e.target.value)} />
-            </FormField>
-          </div>
         </Card>
       </div>
 
       <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
         <Card title="Report Preview">
           <div className="mb-4 space-y-1 text-sm">
-            <Row label="Period" value={`${form.periodStart || '—'} to ${form.periodEnd || '—'}`} />
-            <Row label="Transactions" value={formatNumber(preview.summary.transactionCount, 0)} />
+            <Row label="Client" value={form.clientName} />
+            <Row label="Report Issued" value={preview.reportIssueDateLabel} />
+            <Row label="Asset Categories" value={formatNumber(preview.rows.length, 0)} />
           </div>
-          <ImpactPreviewGrid
-            netWeightKg={preview.summary.totalNetWeightKg}
-            carbonAbatedKgCO2e={preview.summary.carbonAbatedKgCO2e}
-            waterSavedLiters={preview.summary.waterSavedLiters}
-            energySavedKwh={preview.summary.energySavedKwh}
-            landfillAvertedKg={preview.summary.landfillAvertedKg}
-          />
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              ['Materials Processed', formatKg(preview.totals.materialsTotalKg)],
+              ['Net Carbon Abated', formatUnit(preview.totals.netCarbonAbatedKgCO2e, 'kg CO2e')],
+              ['Water Saved', formatUnit(preview.totals.waterSavedLiters, 'L', 0)],
+              ['Energy Saved', formatUnit(preview.totals.energySavedKwh, 'kWh')],
+              ['Landfill Averted', formatKg(preview.totals.landfillAvertedKg)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-700/80">{label}</div>
+                <div className="mt-0.5 text-lg font-semibold text-emerald-900">{value}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card title="Recycled Materials Summary">
+          <div className="space-y-1.5 text-sm">
+            {preview.recycledMaterials.map((m) => (
+              <div key={m.material} className="flex items-baseline justify-between gap-3 border-b border-gray-50 py-1 last:border-0">
+                <span className="text-gray-600">{m.material}</span>
+                <span className="font-medium text-gray-800">{formatKg(m.quantityKg)}</span>
+              </div>
+            ))}
+          </div>
         </Card>
 
         <Card>

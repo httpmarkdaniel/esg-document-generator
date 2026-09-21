@@ -1,96 +1,101 @@
-// Aggregates a report form (manually entered transactions + materials) into
-// the ESGReportData object the DOCX generator consumes. This is the only
-// place that sums/derives values — the template layer only formats and
-// lays them out.
+// Aggregates a report form (client info + manually entered asset-category
+// rows) into the ESGReportData object the DOCX generator consumes. This is
+// the only place that sums/derives values — the template layer only
+// formats and lays them out. Net Carbon Abated, the Recycled Materials
+// table, and all equivalencies are always derived here, never typed by the
+// user, so the generated report stays internally consistent.
 
-import { toNumber, toText } from '../lib/format.js'
+import { toNumber, toText, formatDate } from '../lib/format.js'
+import { MATERIAL_BENEFIT_TEXT, EQUIVALENCY, KM_PER_KG_CO2E } from '../lib/brand.js'
 
-function sumBy(list, key) {
-  return list.reduce((acc, item) => acc + toNumber(item[key]), 0)
+const NUMERIC_KEYS = [
+  'qtyKg',
+  'metalKg',
+  'plasticKg',
+  'glassKg',
+  'electronicsKg',
+  'carbonFootprintKgCO2e',
+  'recycledEmissionsKgCO2e',
+  'waterSavedLiters',
+  'energySavedKwh',
+  'landfillAvertedKg',
+]
+
+function sumRows(rows, key) {
+  return rows.reduce((acc, r) => acc + r[key], 0)
+}
+
+/** Combine the client's address lines into one string, skipping blanks. */
+function combineAddress(form) {
+  return [form.clientAddressLine1, form.clientAddressLine2, form.clientCityStateZipCountry]
+    .map((s) => toText(s, '').trim())
+    .filter(Boolean)
+    .join(', ')
 }
 
 /**
  * @param {ReturnType<import('./reportData.js').emptyReportForm>} form
- * @returns {import('./reportData.js').ESGReportData}
  */
 export function buildEsgReportData(form) {
-  const transactions = (form.transactions || [])
-    .filter((t) => toText(t.reference, '').trim() || toText(t.description, '').trim())
-    .map((t, i) => ({
-      calculationId: toText(t.calculationId, `TXN-${i + 1}`),
-      reference: toText(t.reference),
-      date: t.date || null,
-      description: toText(t.description),
-      quantity: toNumber(t.quantity),
-      netWeightKg: toNumber(t.netWeightKg),
-      carbonAbatedKgCO2e: toNumber(t.carbonAbatedKgCO2e),
-      waterSavedLiters: toNumber(t.waterSavedLiters),
-      energySavedKwh: toNumber(t.energySavedKwh),
-      landfillAvertedKg: toNumber(t.landfillAvertedKg),
-    }))
+  const rows = (form.rows || [])
+    .filter((r) => toText(r.item, '').trim())
+    .map((r, i) => {
+      const normalized = { item: toText(r.item, `Asset Category ${i + 1}`) }
+      for (const key of NUMERIC_KEYS) normalized[key] = toNumber(r[key])
+      normalized.netCarbonAbatedKgCO2e = normalized.carbonFootprintKgCO2e - normalized.recycledEmissionsKgCO2e
+      return normalized
+    })
 
-  const materialsRaw = (form.materials || []).filter((m) => toText(m.material, '').trim())
-  const totalMaterialWeight = sumBy(materialsRaw, 'weightKg')
-  const materials = materialsRaw.map((m) => {
-    const weightKg = toNumber(m.weightKg)
-    return {
-      material: toText(m.material),
-      weightKg,
-      percentage: totalMaterialWeight > 0 ? (weightKg / totalMaterialWeight) * 100 : 0,
-    }
-  })
-
-  const summary = {
-    transactionCount: transactions.length,
-    totalNetWeightKg: sumBy(transactions, 'netWeightKg'),
-    carbonAbatedKgCO2e: sumBy(transactions, 'carbonAbatedKgCO2e'),
-    waterSavedLiters: sumBy(transactions, 'waterSavedLiters'),
-    energySavedKwh: sumBy(transactions, 'energySavedKwh'),
-    landfillAvertedKg: sumBy(transactions, 'landfillAvertedKg'),
+  const totals = {
+    qtyKg: sumRows(rows, 'qtyKg'),
+    metalKg: sumRows(rows, 'metalKg'),
+    plasticKg: sumRows(rows, 'plasticKg'),
+    glassKg: sumRows(rows, 'glassKg'),
+    electronicsKg: sumRows(rows, 'electronicsKg'),
+    carbonFootprintKgCO2e: sumRows(rows, 'carbonFootprintKgCO2e'),
+    recycledEmissionsKgCO2e: sumRows(rows, 'recycledEmissionsKgCO2e'),
+    waterSavedLiters: sumRows(rows, 'waterSavedLiters'),
+    energySavedKwh: sumRows(rows, 'energySavedKwh'),
+    landfillAvertedKg: sumRows(rows, 'landfillAvertedKg'),
   }
+  totals.netCarbonAbatedKgCO2e = totals.carbonFootprintKgCO2e - totals.recycledEmissionsKgCO2e
+  totals.materialsTotalKg = totals.metalKg + totals.plasticKg + totals.glassKg + totals.electronicsKg
 
-  // The transaction totals are the source of truth for net carbon abated.
-  // primary/recycling emissions are an optional supplementary breakdown the
-  // user can provide for context; they do not override the summed total.
-  const primaryMaterialEmissionsKgCO2e = toNumber(form.primaryMaterialEmissionsKgCO2e)
-  const recyclingEmissionsKgCO2e = toNumber(form.recyclingEmissionsKgCO2e)
+  const recycledMaterials = ['Metal', 'Plastic', 'Glass', 'Electronics'].map((label) => ({
+    material: label,
+    quantityKg: totals[`${label.toLowerCase()}Kg`],
+    benefit: MATERIAL_BENEFIT_TEXT[label],
+  }))
 
-  const assumptions = toText(form.assumptions, '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
+  const equivalencies = {
+    kmAvoided: totals.netCarbonAbatedKgCO2e > 0 ? totals.netCarbonAbatedKgCO2e * KM_PER_KG_CO2E : 0,
+    olympicPools: totals.waterSavedLiters / EQUIVALENCY.literesPerOlympicPool,
+    householdYears: totals.energySavedKwh / EQUIVALENCY.kwhPerHouseholdYear,
+    carWeights: totals.landfillAvertedKg / EQUIVALENCY.kgPerAverageCar,
+  }
 
   const now = new Date()
 
   return {
     report: {
       id: `RPT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${Math.floor(now.getTime() % 1e5)}`,
-      title: toText(form.title, 'Environmental Impact Report'),
-      periodStart: form.periodStart || null,
-      periodEnd: form.periodEnd || null,
+      title: toText(form.title, 'Carbon Abatement Report'),
       generatedAt: now.toISOString(),
       templateVersion: 'temporary-v1',
     },
-    organization: toText(form.organization, ''),
-    filters: {
-      client: toText(form.filters?.client, ''),
-      vendor: toText(form.filters?.vendor, ''),
-      project: toText(form.filters?.project, ''),
-      auction: toText(form.filters?.auction, ''),
-      branch: toText(form.filters?.branch, ''),
+    client: {
+      name: toText(form.clientName),
+      addressLine1: toText(form.clientAddressLine1, ''),
+      addressLine2: toText(form.clientAddressLine2, ''),
+      cityStateZipCountry: toText(form.clientCityStateZipCountry, ''),
+      combinedAddress: combineAddress(form),
     },
-    summary,
-    carbon: {
-      primaryMaterialEmissionsKgCO2e,
-      recyclingEmissionsKgCO2e,
-      netCarbonAbatedKgCO2e: summary.carbonAbatedKgCO2e,
-    },
-    materials,
-    transactions,
-    methodology: {
-      version: toText(form.methodologyVersion, 'v1 (temporary)'),
-      source: toText(form.methodologySource, 'Manually entered values'),
-      assumptions: assumptions.length ? assumptions : ['No assumptions recorded.'],
-    },
+    collectionDateRange: toText(form.collectionDateRange, ''),
+    reportIssueDate: form.reportIssueDate || null,
+    reportIssueDateLabel: formatDate(form.reportIssueDate),
+    rows,
+    totals,
+    recycledMaterials,
+    equivalencies,
   }
 }
