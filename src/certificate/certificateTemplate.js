@@ -121,14 +121,14 @@ function drawRecipientBlock(doc, data, y) {
   doc.text(toText(data.recipient), pageWidth / 2, cursorY, { align: 'center' })
 
   if (toText(data.companyAddress, '') !== '—') {
-    cursorY += 6
+    cursorY += 8
     doc.setTextColor(...BRAND.muted)
     doc.setFont('Poppins', 'normal')
     doc.setFontSize(10)
     doc.text(toText(data.companyAddress), pageWidth / 2, cursorY, { align: 'center' })
   }
 
-  cursorY += 7
+  cursorY += 9
   doc.setFont('Poppins', 'italic')
   doc.setFontSize(10)
   doc.setTextColor(...BRAND.ink)
