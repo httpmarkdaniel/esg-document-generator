@@ -9,6 +9,12 @@ import complianceStripUrl from '../assets/certificate/compliance-strip.png'
 import treeIconUrl from '../assets/certificate/icon-tree.png'
 import energyIconUrl from '../assets/certificate/icon-energy.png'
 import recycleIconUrl from '../assets/certificate/icon-recycle.png'
+import footprintIconUrl from '../assets/certificate/icon-footprint.png'
+import co2IconUrl from '../assets/certificate/icon-co2.png'
+import cloudIconUrl from '../assets/certificate/icon-cloud.png'
+import carIconUrl from '../assets/certificate/icon-car.png'
+import landfillIconUrl from '../assets/certificate/icon-landfill.png'
+import waterIconUrl from '../assets/certificate/icon-water.png'
 
 export { ASSET_DIMENSIONS } from './assetDimensions.js'
 
@@ -33,12 +39,18 @@ function loadAsDataUrl(url) {
 
 /** Load (and cache) every certificate brand asset as a data URL. */
 export async function loadCertificateAssets() {
-  const [logo, complianceStrip, iconTree, iconEnergy, iconRecycle] = await Promise.all([
+  const [logo, complianceStrip, iconTree, iconEnergy, iconRecycle, iconFootprint, iconCo2, iconCloud, iconCar, iconLandfill, iconWater] = await Promise.all([
     loadAsDataUrl(logoUrl),
     loadAsDataUrl(complianceStripUrl),
     loadAsDataUrl(treeIconUrl),
     loadAsDataUrl(energyIconUrl),
     loadAsDataUrl(recycleIconUrl),
+    loadAsDataUrl(footprintIconUrl),
+    loadAsDataUrl(co2IconUrl),
+    loadAsDataUrl(cloudIconUrl),
+    loadAsDataUrl(carIconUrl),
+    loadAsDataUrl(landfillIconUrl),
+    loadAsDataUrl(waterIconUrl),
   ])
-  return { logo, complianceStrip, iconTree, iconEnergy, iconRecycle }
+  return { logo, complianceStrip, iconTree, iconEnergy, iconRecycle, iconFootprint, iconCo2, iconCloud, iconCar, iconLandfill, iconWater }
 }
