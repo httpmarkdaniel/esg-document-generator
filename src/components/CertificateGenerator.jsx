@@ -73,7 +73,7 @@ export function CertificateGenerator({ prefillCalculation, onPrefillConsumed } =
     setStatus(null)
     try {
       const data = normalizeCertificateData(form, { certificateNumber: previewNumber })
-      const { blob, filename } = generateCertificatePdf(data)
+      const { blob, filename } = await generateCertificatePdf(data)
       downloadBlob(blob, filename)
       setStatus({ tone: 'success', message: `Certificate generated: ${filename}` })
     } catch (err) {

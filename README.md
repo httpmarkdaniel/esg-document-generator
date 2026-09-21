@@ -113,17 +113,35 @@ normalize / validate data
   that `pages/ESGDocumentsPage.jsx` sets when the Calculator hands off a
   result. (Impact Calculator / Certificate / ESG Report tabs.)
 
+## Brand assets
+
+`src/assets/certificate/` holds the **real EnviroCycle logo, the tree/
+energy/recycle tile icons, and a composited ISO/BSI/FDA/BPAP/UN compliance-
+logo strip** — extracted directly from the reference
+`Template ESG Certificates.pdf`'s embedded images (merging each image with
+its separate PDF soft-mask/alpha channel, then downscaled to a sane print
+resolution) rather than redrawn. `src/certificate/assets.js` loads and
+caches them as data URLs for `jsPDF.addImage`; `assetDimensions.js` holds
+just their pixel dimensions (kept dependency-free so
+`certificateTemplate.js` doesn't need a browser to import it — useful for
+Node-based testing of the drawing logic). The compliance-badge order in the
+composited strip is close to, but not pixel-identical to, the source PDF's
+row (they were composited fresh rather than cropped in place).
+
+The Word report currently does **not** embed the logo/compliance-strip
+images (text-only header/footer) — say the word if you'd like that added
+too, via `docx`'s `ImageRun`.
+
 ## Replacing the templates later
 
-The layouts are close to the real reference PDFs but use **vector-drawn
-placeholders** for the logo mark and the ISO/BSI/FDA/UN compliance-logo
-strip (no image assets were available to embed). When the official assets
-are ready:
+When an *official* (agency-issued, not extracted) set of assets is ready:
 
-- Certificate: rewrite `src/certificate/certificateTemplate.js` (the
-  per-type `draw*Certificate(doc, data)` functions, or just
-  `drawHeader`/`drawFooter` for the logo/compliance strip). Nothing else
-  needs to change.
+- Certificate: swap the files in `src/assets/certificate/` and, if sizing/
+  aspect ratios differ, adjust the `ASSET_DIMENSIONS` values in
+  `assetDimensions.js`. For a layout change, rewrite
+  `src/certificate/certificateTemplate.js` (the per-type
+  `draw*Certificate(doc, assets, data)` functions, or just
+  `drawHeader`/`drawFooter`). Nothing else needs to change.
 - Report: rewrite `src/reports/reportTemplate.js` (the
   `buildReportDocument(data)` function) — or, if an official
   `esg-report-template.docx` is supplied, swap `generateReportDocx.js` to
