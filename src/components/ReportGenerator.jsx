@@ -5,15 +5,22 @@ import { emptyReportForm, emptyAssetCategoryRow, validateReportForm } from '../r
 import { buildEsgReportData } from '../reports/reportAggregator.js'
 import { generateReportPdf } from '../reports/generateReportPdf.js'
 import { downloadBlob } from '../lib/download.js'
-import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
+import { formatKg, formatNumber, formatUnit, toNumber, todayIso } from '../lib/format.js'
 import { getRrSummariesInRange } from '../rrData/rrClient.js'
+import { calculateCarbonFromMaterialWeights, calculateSavingsFromNetWeight } from '../calculator/calculatorEngine.js'
 
 /** True when an asset-category row has nothing entered yet. */
 function isBlankRow(row) {
   return Object.values(row).every((v) => v === '' || v === undefined)
 }
 
-/** Build an asset-category row directly from a calculator result — never re-derive the numbers. */
+/**
+ * Build an asset-category row from a calculator result or an RR sheet
+ * summary. Only item/qtyKg/material-breakdown are ever stored on the row —
+ * carbon/water/energy/landfill are always derived downstream (in
+ * reportAggregator.js) from those, so there's nothing else to carry across
+ * or keep in sync here.
+ */
 function rowFromCalculation({ input, result }, index) {
   return {
     item: input.description?.trim() || `Asset Category ${index}`,
@@ -22,19 +29,14 @@ function rowFromCalculation({ input, result }, index) {
     plasticKg: String(result.materials.plastic.weightKg),
     glassKg: String(result.materials.glass.weightKg),
     electronicsKg: String(result.materials.electronics.weightKg),
-    carbonFootprintKgCO2e: String(result.totalCarbonFootprintKgCO2e),
-    recycledEmissionsKgCO2e: String(result.recycledEmissionsKgCO2e),
-    waterSavedLiters: String(result.waterSavedLiters),
-    energySavedKwh: String(result.energySavedKwh),
-    landfillAvertedKg: String(result.landfillAvertedKg),
   }
 }
 
 /**
- * Build an asset-category row directly from an RR sheet summary. The sheet
- * has no material-split/carbon/water/energy data, so only weight-based
- * fields are filled — carbon/water/energy are left blank for manual entry
- * (or via the Calculator), never invented.
+ * The RR sheet has no material-split data, so only item/qtyKg are filled;
+ * water/energy/landfill still compute automatically from qtyKg alone (no
+ * material breakdown needed for those), carbon stays 0 until the material
+ * breakdown is typed in.
  */
 function rowFromRrSummary(summary) {
   return {
@@ -44,12 +46,14 @@ function rowFromRrSummary(summary) {
     plasticKg: '',
     glassKg: '',
     electronicsKg: '',
-    carbonFootprintKgCO2e: '',
-    recycledEmissionsKgCO2e: '',
-    waterSavedLiters: '',
-    energySavedKwh: '',
-    landfillAvertedKg: String(summary.totalNetWeight),
   }
+}
+
+/** Row-level derived values for the read-only columns — same formulas as the Certificate/Calculator. */
+function computeRowDerived(row) {
+  const carbon = calculateCarbonFromMaterialWeights(row)
+  const savings = calculateSavingsFromNetWeight(toNumber(row.qtyKg))
+  return { ...carbon, ...savings }
 }
 
 const ROW_FIELDS = [
@@ -59,11 +63,14 @@ const ROW_FIELDS = [
   ['plasticKg', 'Plastic (kg)', 'number'],
   ['glassKg', 'Glass (kg)', 'number'],
   ['electronicsKg', 'Electronics (kg)', 'number'],
-  ['carbonFootprintKgCO2e', 'Carbon Footprint (kgCO2e)', 'number'],
-  ['recycledEmissionsKgCO2e', 'Recycled Emissions (kgCO2e)', 'number'],
-  ['waterSavedLiters', 'Water Saved (L)', 'number'],
-  ['energySavedKwh', 'Energy Saved (kWh)', 'number'],
-  ['landfillAvertedKg', 'Landfill Averted (kg)', 'number'],
+]
+
+const COMPUTED_COLUMNS = [
+  ['totalCarbonFootprintKgCO2e', 'Carbon Footprint (kgCO2e)', (d) => formatNumber(d.totalCarbonFootprintKgCO2e)],
+  ['recycledEmissionsKgCO2e', 'Recycled Emissions (kgCO2e)', (d) => formatNumber(d.recycledEmissionsKgCO2e)],
+  ['waterSavedLiters', 'Water Saved (L)', (d) => formatNumber(d.waterSavedLiters, 0)],
+  ['energySavedKwh', 'Energy Saved (kWh)', (d) => formatNumber(d.energySavedKwh)],
+  ['landfillAvertedKg', 'Landfill Averted (kg)', (d) => formatNumber(d.landfillAvertedKg)],
 ]
 
 export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, onRowConsumed, hideActions = false }, ref) {
@@ -81,17 +88,21 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   const [rrLoading, setRrLoading] = useState(false)
   const [rrError, setRrError] = useState(null)
 
-  // Apply a calculation handed over from the Impact Calculator tab as a new
-  // asset-category row. The calculator is the source of truth for these
-  // numbers — never re-derive them here, just carry them across.
+  // Apply a calculation (from the Impact Calculator tab) or an RR summary
+  // (from the Certificate's RR picker) as a new asset-category row. Either
+  // way, only item/qtyKg/material-breakdown get carried across — never
+  // re-derive carbon/water/energy here, that happens downstream.
   useEffect(() => {
     if (!rowToAdd) return
     setForm((f) => {
-      const newRow = rowFromCalculation(rowToAdd, f.rows.length + 1)
+      const newRow = rowToAdd.source === 'rr' ? rowFromRrSummary(rowToAdd.summary) : rowFromCalculation(rowToAdd, f.rows.length + 1)
       const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
       return { ...f, rows: onlyRowIsBlank ? [newRow] : [...f.rows, newRow] }
     })
-    setStatus({ tone: 'success', message: 'Calculation added as a new asset category row.' })
+    setStatus({
+      tone: 'success',
+      message: rowToAdd.source === 'rr' ? `RR ${rowToAdd.summary.referenceNo} added as a new asset category row.` : 'Calculation added as a new asset category row.',
+    })
     onRowConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowToAdd])
@@ -140,7 +151,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
       })
       setStatus({
         tone: 'success',
-        message: `Loaded ${summaries.length} RR(s) received ${rrRangeStart} to ${rrRangeEnd}. Carbon/water/energy weren't in the sheet — fill those in manually or via the Calculator.`,
+        message: `Loaded ${summaries.length} RR(s) received ${rrRangeStart} to ${rrRangeEnd}. Water/Energy/Landfill are computed from each row's weight. Carbon needs a Material Breakdown per row — the sheet doesn't have material composition.`,
       })
     } catch (err) {
       setRrError(err.message)
@@ -249,13 +260,21 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
           )}
         </Card>
 
-        <Card title="Detailed Impact Breakdown" subtitle="One row per asset category — matches Table 1 of the client template.">
+        <Card
+          title="Detailed Impact Breakdown"
+          subtitle="One row per asset category — matches Table 1 of the client template. Carbon/water/energy/landfill columns are computed, not typed."
+        >
           {errors.rows && <p className="mb-2 text-xs text-red-600">{errors.rows}</p>}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] border-separate border-spacing-y-1.5 text-sm">
+            <table className="w-full min-w-[1500px] border-separate border-spacing-y-1.5 text-sm">
               <thead>
                 <tr>
                   {ROW_FIELDS.map(([key, label]) => (
+                    <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                      {label}
+                    </th>
+                  ))}
+                  {COMPUTED_COLUMNS.map(([key, label]) => (
                     <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
                       {label}
                     </th>
@@ -264,31 +283,41 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
                 </tr>
               </thead>
               <tbody>
-                {form.rows.map((row, i) => (
-                  <tr key={i}>
-                    {ROW_FIELDS.map(([key, , type]) => (
-                      <td key={key} className="px-1">
-                        <TextInput
-                          type={type}
-                          inputMode={type === 'number' ? 'decimal' : undefined}
-                          value={row[key]}
-                          onChange={(e) => setRow(i, key, e.target.value)}
-                          className="min-w-[90px]"
-                        />
+                {form.rows.map((row, i) => {
+                  const derived = computeRowDerived(row)
+                  return (
+                    <tr key={i}>
+                      {ROW_FIELDS.map(([key, , type]) => (
+                        <td key={key} className="px-1">
+                          <TextInput
+                            type={type}
+                            inputMode={type === 'number' ? 'decimal' : undefined}
+                            value={row[key]}
+                            onChange={(e) => setRow(i, key, e.target.value)}
+                            className="min-w-[90px]"
+                          />
+                        </td>
+                      ))}
+                      {COMPUTED_COLUMNS.map(([key, , format]) => (
+                        <td key={key} className="px-1">
+                          <div className="flex h-[38px] min-w-[90px] items-center rounded-lg border border-gray-200 bg-gray-50 px-2 text-sm text-gray-600">
+                            {format(derived)}
+                          </div>
+                        </td>
+                      ))}
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => removeRow(i)}
+                          className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
+                          aria-label="Remove row"
+                        >
+                          ✕
+                        </button>
                       </td>
-                    ))}
-                    <td>
-                      <button
-                        type="button"
-                        onClick={() => removeRow(i)}
-                        className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
-                        aria-label="Remove row"
-                      >
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

@@ -13,7 +13,10 @@ import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
 import { getRrNumbers, getRrSummary, getRrSummariesInRange } from '../rrData/rrClient.js'
 
-export const CertificateGenerator = forwardRef(function CertificateGenerator({ prefillCalculation, onPrefillConsumed, hideActions = false }, ref) {
+export const CertificateGenerator = forwardRef(function CertificateGenerator(
+  { prefillCalculation, onPrefillConsumed, onRrSelected, hideActions = false },
+  ref,
+) {
   const [form, setForm] = useState({ ...emptyCertificateForm(), periodStart: todayIso(), periodEnd: todayIso(), givenDate: todayIso() })
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
@@ -58,8 +61,11 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
   const rrOptionList = rrFilteredNumbers ?? rrNumbers
 
   // Apply a calculation handed over from the Impact Calculator tab. The
-  // calculator is the source of truth for these numbers — never re-derive
-  // them here, just carry them across.
+  // calculator is the source of truth for these numbers — we only carry
+  // across net weight + material breakdown; carbon/water/energy are then
+  // re-derived downstream by normalizeCertificateData using the exact same
+  // formulas, so there's never a second copy of these numbers to keep in
+  // sync.
   useEffect(() => {
     if (!prefillCalculation) return
     const { result } = prefillCalculation
@@ -67,10 +73,6 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
       ...f,
       materialsCollectedKg: String(result.netWeightKg),
       landfillDivertedKg: String(result.landfillAvertedKg),
-      totalCarbonFootprintKgCO2e: String(result.totalCarbonFootprintKgCO2e),
-      recycledEmissionsKgCO2e: String(result.recycledEmissionsKgCO2e),
-      waterSavedLiters: String(result.waterSavedLiters),
-      energySavedKwh: String(result.energySavedKwh),
       materials: {
         metalKg: String(result.materials.metal.weightKg),
         plasticKg: String(result.materials.plastic.weightKg),
@@ -115,7 +117,11 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
         materialsCollectedKg: String(summary.totalNetWeight),
         landfillDivertedKg: String(summary.totalNetWeight),
       }))
-      setStatus({ tone: 'success', message: `Autofilled from RR ${referenceNo} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). Carbon/water/energy are not in the sheet — enter those manually or via the Calculator.` })
+      setStatus({
+        tone: 'success',
+        message: `Autofilled from RR ${referenceNo} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). Water/Energy are computed from that weight; Carbon needs the Material Breakdown below (the sheet doesn't have material composition) — also added to the Report below.`,
+      })
+      onRrSelected?.(summary)
     } catch (err) {
       setRrError(err.message)
     } finally {
@@ -314,41 +320,10 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
               </FormField>
             )}
 
-            {(type === 'EIC' || type === 'CAC') && (
-              <div className="border-t border-gray-100 pt-4">
-                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Carbon</div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <FormField
-                    label="Total Carbon Footprint (kg CO2e)"
-                    error={errors.totalCarbonFootprintKgCO2e}
-                    hint="Embodied carbon avoided through recycling"
-                  >
-                    <TextInput
-                      type="number"
-                      inputMode="decimal"
-                      value={form.totalCarbonFootprintKgCO2e}
-                      onChange={(e) => setField('totalCarbonFootprintKgCO2e', e.target.value)}
-                      className={inputErrorClass(errors.totalCarbonFootprintKgCO2e)}
-                    />
-                  </FormField>
-                  <FormField label="Recycled Emissions (kg CO2e)">
-                    <TextInput
-                      type="number"
-                      inputMode="decimal"
-                      value={form.recycledEmissionsKgCO2e}
-                      onChange={(e) => setField('recycledEmissionsKgCO2e', e.target.value)}
-                    />
-                  </FormField>
-                </div>
-                <p className="mt-1.5 text-xs text-gray-400">
-                  Net Carbon Abated is derived automatically: {formatUnit(preview.netCarbonAbatedKgCO2e, 'kg CO2e')}
-                </p>
-              </div>
-            )}
-
-            {(type === 'EIC' || type === 'LDC') && (
+            {(type === 'EIC' || type === 'CAC' || type === 'LDC') && (
               <div className="border-t border-gray-100 pt-4">
                 <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Material Breakdown</div>
+                {errors.materialsBreakdown && <p className="mb-2 text-xs text-red-600">{errors.materialsBreakdown}</p>}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
                     ['metalKg', 'Metal (kg)'],
@@ -364,17 +339,26 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator({ p
               </div>
             )}
 
+            {(type === 'EIC' || type === 'CAC') && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Carbon — computed from Material Breakdown</div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <ComputedField label="Total Carbon Footprint (kg CO2e)" value={formatNumber(preview.totalCarbonFootprintKgCO2e)} />
+                  <ComputedField label="Recycled Emissions (kg CO2e)" value={formatNumber(preview.recycledEmissionsKgCO2e)} />
+                </div>
+                <p className="mt-1.5 text-xs text-gray-400">Net Carbon Abated: {formatUnit(preview.netCarbonAbatedKgCO2e, 'kg CO2e')}</p>
+              </div>
+            )}
+
             {type === 'EIC' && (
               <div className="border-t border-gray-100 pt-4">
-                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Environmental Savings</div>
+                <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Environmental Savings — Water/Energy computed from Landfill Diverted (kg)
+                </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <FormField label="Water Saved (L)">
-                    <TextInput type="number" inputMode="decimal" value={form.waterSavedLiters} onChange={(e) => setField('waterSavedLiters', e.target.value)} />
-                  </FormField>
-                  <FormField label="Energy Saved (kWh)">
-                    <TextInput type="number" inputMode="decimal" value={form.energySavedKwh} onChange={(e) => setField('energySavedKwh', e.target.value)} />
-                  </FormField>
-                  <FormField label="Trees Saved" hint="Optional">
+                  <ComputedField label="Water Saved (L)" value={formatNumber(preview.waterSavedLiters, 0)} />
+                  <ComputedField label="Energy Saved (kWh)" value={formatNumber(preview.energySavedKwh)} />
+                  <FormField label="Trees Saved" hint="Manual — no established formula">
                     <TextInput type="number" inputMode="decimal" value={form.treesSaved} onChange={(e) => setField('treesSaved', e.target.value)} />
                   </FormField>
                 </div>
@@ -496,5 +480,14 @@ function Row({ label, value }) {
       <span className="text-xs uppercase tracking-wide text-gray-400">{label}</span>
       <span className="truncate text-right font-medium text-gray-800">{value || '—'}</span>
     </div>
+  )
+}
+
+/** A non-editable value derived by the app (never typed directly), styled like a disabled input. */
+function ComputedField({ label, value }) {
+  return (
+    <FormField label={label}>
+      <div className="flex h-[38px] items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-700">{value}</div>
+    </FormField>
   )
 }

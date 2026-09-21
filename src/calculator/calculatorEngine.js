@@ -97,3 +97,44 @@ export function calculateImpact({ grossKg, tareKg, split }) {
     landfillAvertedKg,
   }
 }
+
+/**
+ * Carbon footprint / recycled emissions from a KG-based material breakdown
+ * (not percentages) — used wherever material weights are already known
+ * directly (certificate/report forms) rather than derived from a % split.
+ * Accepts the `{ metalKg, plasticKg, glassKg, electronicsKg }` shape used
+ * throughout certificateData.js / reportData.js.
+ */
+export function calculateCarbonFromMaterialWeights(materials) {
+  let totalCarbonFootprintKgCO2e = 0
+  let recycledEmissionsKgCO2e = 0
+
+  for (const key of MATERIAL_KEYS) {
+    const weightKg = toNumber(materials?.[`${key}Kg`])
+    const primaryFactor = PRIMARY_FACTORS[key]
+    const recyclingFactor = primaryFactor * RECYCLING_FACTOR_RATE
+    totalCarbonFootprintKgCO2e += weightKg * primaryFactor
+    recycledEmissionsKgCO2e += weightKg * recyclingFactor
+  }
+
+  return {
+    totalCarbonFootprintKgCO2e,
+    recycledEmissionsKgCO2e,
+    netCarbonAbatedKgCO2e: totalCarbonFootprintKgCO2e - recycledEmissionsKgCO2e,
+  }
+}
+
+/**
+ * Water/energy/landfill savings from net weight alone — these do NOT
+ * depend on material composition, so they can be computed as soon as a net
+ * weight is known (e.g. straight from an RR's weight, before any material
+ * breakdown has been entered).
+ */
+export function calculateSavingsFromNetWeight(netWeightKg) {
+  const netWeight = toNumber(netWeightKg)
+  return {
+    waterSavedLiters: netWeight * WATER_LITERS_PER_KG,
+    energySavedKwh: netWeight * ENERGY_KWH_PER_KG,
+    landfillAvertedKg: netWeight * LANDFILL_DIVERSION_RATE,
+  }
+}

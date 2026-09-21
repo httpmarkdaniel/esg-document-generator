@@ -31,6 +31,12 @@ export function ESGDocumentsPage() {
     setActive('documents')
   }
 
+  // The Certificate's own RR picker (date range + RR number) also adds that
+  // same RR to the Report as a row — one RR selection feeds both documents.
+  function handleRrSelectedForReport(summary) {
+    setReportRowToAdd({ source: 'rr', summary })
+  }
+
   async function handleGenerateBoth() {
     setGeneratingBoth(true)
     setCombinedStatus(null)
@@ -80,7 +86,13 @@ export function ESGDocumentsPage() {
         <div className="flex flex-col gap-8">
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Certificate</h2>
-            <CertificateGenerator ref={certRef} prefillCalculation={certificatePrefill} onPrefillConsumed={() => setCertificatePrefill(null)} hideActions />
+            <CertificateGenerator
+              ref={certRef}
+              prefillCalculation={certificatePrefill}
+              onPrefillConsumed={() => setCertificatePrefill(null)}
+              onRrSelected={handleRrSelectedForReport}
+              hideActions
+            />
           </section>
 
           <section>

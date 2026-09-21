@@ -24,6 +24,12 @@ export function emptyReportForm() {
   }
 }
 
+// Carbon footprint/recycled emissions/water/energy/landfill-averted are NOT
+// part of the row's editable shape — reportAggregator.js always derives
+// them from metalKg/plasticKg/glassKg/electronicsKg (carbon) and qtyKg
+// (water/energy/landfill), using the same formulas as the Impact
+// Calculator. This is what "only material breakdown is manually typed"
+// means in practice: there is nothing else to type.
 export function emptyAssetCategoryRow() {
   return {
     item: '',
@@ -32,11 +38,6 @@ export function emptyAssetCategoryRow() {
     plasticKg: '',
     glassKg: '',
     electronicsKg: '',
-    carbonFootprintKgCO2e: '',
-    recycledEmissionsKgCO2e: '',
-    waterSavedLiters: '',
-    energySavedKwh: '',
-    landfillAvertedKg: '',
   }
 }
 

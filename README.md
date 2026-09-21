@@ -23,17 +23,30 @@ itself (see `src/calculator/calculatorEngine.js`).
 Both the Certificate and the Report can also pull real records from
 Envirocycle's RR consolidation Google Sheet instead of manual entry:
 
-- **Certificate**: an RR-number picker (typeahead over all ~1,725 RR
-  reference numbers) autofills recipient, address, and net-weight fields
-  from that RR's line items.
+- **Certificate**: a date-range loader narrows an RR-number picker
+  (typeahead, otherwise over all ~1,725 RR reference numbers); selecting one
+  autofills recipient, address, and net-weight fields from that RR's line
+  items — **and adds the same RR as a row on the Report below**, so one
+  selection feeds both documents.
 - **Report**: a received-date range loads every RR in that window as its
-  own asset-category row (weight/landfill only).
+  own asset-category row (weight only).
 
-The sheet has **no material-split (metal/plastic/glass/electronics) or
-carbon/water/energy data** — only weight and a waste-handling category — so
-those fields are intentionally left blank for manual entry (or via the
-Calculator) rather than invented. See `api/rr-data.js` for the exact column
-mapping.
+The sheet has **no material-split (metal/plastic/glass/electronics) data**
+— only weight and a waste-handling category — so that part genuinely has to
+be typed in (or pulled from the Calculator). Everything else is computed,
+never separately entered:
+
+- **Water Saved / Energy Saved / Landfill Averted** depend only on net
+  weight (200 L/kg, 30 kWh/kg, 100% diversion) — so these fill in
+  immediately from an RR's weight alone, no material breakdown needed.
+- **Carbon Footprint / Recycled Emissions / Net Carbon Abated** depend on
+  the per-material factors, so they compute automatically as soon as the
+  Material Breakdown is filled in — there's no separate "carbon" input to
+  type.
+
+See `src/calculator/calculatorEngine.js`'s `calculateCarbonFromMaterialWeights`
+/ `calculateSavingsFromNetWeight` (the only two places these formulas live)
+and `api/rr-data.js` for the sheet's exact column mapping.
 
 ## Running it
 

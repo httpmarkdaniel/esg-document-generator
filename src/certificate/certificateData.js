@@ -8,6 +8,7 @@
 
 import { toNumber, toText, formatDate } from '../lib/format.js'
 import { CERTIFICATE_TYPES, KM_PER_KG_CO2E } from '../lib/brand.js'
+import { calculateCarbonFromMaterialWeights, calculateSavingsFromNetWeight } from '../calculator/calculatorEngine.js'
 
 /** @returns {object} a blank certificate form's default values (superset of all 5 types) */
 export function emptyCertificateForm() {
@@ -21,10 +22,6 @@ export function emptyCertificateForm() {
     givenDate: '',
     materialsCollectedKg: '',
     landfillDivertedKg: '',
-    totalCarbonFootprintKgCO2e: '',
-    recycledEmissionsKgCO2e: '',
-    waterSavedLiters: '',
-    energySavedKwh: '',
     treesSaved: '',
     materials: { metalKg: '', plasticKg: '', glassKg: '', electronicsKg: '' },
     totalReceivedVolumeKg: '',
@@ -47,17 +44,18 @@ export function validateCertificateForm(form) {
   }
   if (!toText(form.givenDate, '').trim()) errors.givenDate = 'Certificate date is required.'
 
+  const hasMaterials = [form.materials.metalKg, form.materials.plasticKg, form.materials.glassKg, form.materials.electronicsKg].some(
+    (v) => toNumber(v) > 0,
+  )
+
   switch (form.certificateType) {
     case 'CAC': {
-      if (toNumber(form.totalCarbonFootprintKgCO2e) <= 0) {
-        errors.totalCarbonFootprintKgCO2e = 'Total carbon footprint is required.'
+      if (!hasMaterials) {
+        errors.materialsBreakdown = 'Enter a material breakdown — carbon footprint is computed from it.'
       }
       break
     }
     case 'LDC': {
-      const hasMaterials = [form.materials.metalKg, form.materials.plasticKg, form.materials.glassKg, form.materials.electronicsKg].some(
-        (v) => toNumber(v) > 0,
-      )
       if (toNumber(form.materialsCollectedKg) <= 0 && !hasMaterials) {
         errors.materialsCollectedKg = 'Enter materials collected or at least one material breakdown value.'
       }
@@ -72,14 +70,8 @@ export function validateCertificateForm(form) {
     }
     case 'EIC':
     default: {
-      const hasAnyImpact = [
-        form.landfillDivertedKg,
-        form.totalCarbonFootprintKgCO2e,
-        form.materials.plasticKg,
-        form.waterSavedLiters,
-        form.energySavedKwh,
-      ].some((v) => toNumber(v) > 0)
-      if (!hasAnyImpact) errors.impact = 'Enter at least one environmental impact value greater than zero.'
+      const hasAnyImpact = [form.landfillDivertedKg, form.materialsCollectedKg, ...Object.values(form.materials)].some((v) => toNumber(v) > 0)
+      if (!hasAnyImpact) errors.impact = 'Enter landfill diverted, materials collected, or a material breakdown value greater than zero.'
       break
     }
   }
@@ -119,10 +111,16 @@ export function normalizeCertificateData(form, { certificateNumber } = {}) {
   }
   const materialsTotalKg = materials.metalKg + materials.plasticKg + materials.glassKg + materials.electronicsKg
 
-  const totalCarbonFootprintKgCO2e = toNumber(form.totalCarbonFootprintKgCO2e)
-  const recycledEmissionsKgCO2e = toNumber(form.recycledEmissionsKgCO2e)
-  const netCarbonAbatedKgCO2e = totalCarbonFootprintKgCO2e - recycledEmissionsKgCO2e
+  // Carbon is always derived from the material breakdown — never typed
+  // directly — using the same factors as the Impact Calculator.
+  const { totalCarbonFootprintKgCO2e, recycledEmissionsKgCO2e, netCarbonAbatedKgCO2e } = calculateCarbonFromMaterialWeights(materials)
   const kmAvoided = netCarbonAbatedKgCO2e > 0 ? netCarbonAbatedKgCO2e * KM_PER_KG_CO2E : 0
+
+  // Water/energy only depend on net weight (not material composition), so
+  // they're derivable as soon as a net weight is known — e.g. straight
+  // from an RR, before any material breakdown has been entered.
+  const netWeightForSavings = toNumber(form.landfillDivertedKg) || toNumber(form.materialsCollectedKg) || materialsTotalKg
+  const { waterSavedLiters, energySavedKwh } = calculateSavingsFromNetWeight(netWeightForSavings)
 
   const rigidPlasticKg = toNumber(form.rigidPlasticKg)
   const flexiblePlasticKg = toNumber(form.flexiblePlasticKg)
@@ -146,8 +144,8 @@ export function normalizeCertificateData(form, { certificateNumber } = {}) {
     netCarbonAbatedKgCO2e,
     kmAvoided,
 
-    waterSavedLiters: toNumber(form.waterSavedLiters),
-    energySavedKwh: toNumber(form.energySavedKwh),
+    waterSavedLiters,
+    energySavedKwh,
     treesSaved: toNumber(form.treesSaved),
     plasticRecycledKg: materials.plasticKg,
 

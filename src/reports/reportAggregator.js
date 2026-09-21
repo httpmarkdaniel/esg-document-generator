@@ -7,19 +7,9 @@
 
 import { toNumber, toText, formatDate } from '../lib/format.js'
 import { MATERIAL_BENEFIT_TEXT, EQUIVALENCY, KM_PER_KG_CO2E } from '../lib/brand.js'
+import { calculateCarbonFromMaterialWeights, calculateSavingsFromNetWeight } from '../calculator/calculatorEngine.js'
 
-const NUMERIC_KEYS = [
-  'qtyKg',
-  'metalKg',
-  'plasticKg',
-  'glassKg',
-  'electronicsKg',
-  'carbonFootprintKgCO2e',
-  'recycledEmissionsKgCO2e',
-  'waterSavedLiters',
-  'energySavedKwh',
-  'landfillAvertedKg',
-]
+const MATERIAL_KEYS = ['qtyKg', 'metalKg', 'plasticKg', 'glassKg', 'electronicsKg']
 
 function sumRows(rows, key) {
   return rows.reduce((acc, r) => acc + r[key], 0)
@@ -37,13 +27,24 @@ function combineAddress(form) {
  * @param {ReturnType<import('./reportData.js').emptyReportForm>} form
  */
 export function buildEsgReportData(form) {
+  // Carbon is derived from each row's material breakdown; water/energy/
+  // landfill are derived from each row's net weight (qtyKg) alone — never
+  // typed directly, same formulas as the Impact Calculator.
   const rows = (form.rows || [])
     .filter((r) => toText(r.item, '').trim())
     .map((r, i) => {
       const normalized = { item: toText(r.item, `Asset Category ${i + 1}`) }
-      for (const key of NUMERIC_KEYS) normalized[key] = toNumber(r[key])
-      normalized.netCarbonAbatedKgCO2e = normalized.carbonFootprintKgCO2e - normalized.recycledEmissionsKgCO2e
-      return normalized
+      for (const key of MATERIAL_KEYS) normalized[key] = toNumber(r[key])
+
+      const carbon = calculateCarbonFromMaterialWeights(r)
+      const savings = calculateSavingsFromNetWeight(normalized.qtyKg)
+      return {
+        ...normalized,
+        carbonFootprintKgCO2e: carbon.totalCarbonFootprintKgCO2e,
+        recycledEmissionsKgCO2e: carbon.recycledEmissionsKgCO2e,
+        netCarbonAbatedKgCO2e: carbon.netCarbonAbatedKgCO2e,
+        ...savings,
+      }
     })
 
   const totals = {
