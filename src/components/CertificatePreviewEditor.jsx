@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Card, GhostButton, Banner } from './Card.jsx'
 import { TextInput, TextArea } from './FormField.jsx'
 import { PlacedImagesLayer } from './PlacedImagesLayer.jsx'
+import { BuiltInImagesLayer } from './BuiltInImagesLayer.jsx'
+import { BUILT_IN_IMAGES, COMPLIANCE_LOGOS, LOGO_ID, ICONS_ID, hiddenImageSet } from '../certificate/builtInImages.js'
 import { generateCertificatePdf } from '../certificate/generateCertificatePdf.js'
+import { loadCertificateAssets } from '../certificate/assets.js'
 import { certificateTextFields } from '../certificate/certificateText.js'
 import { PAGE_W_MM, PAGE_H_MM } from '../certificate/page.js'
 import { renderPdfPage } from '../lib/renderPdfPage.js'
@@ -80,7 +83,43 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
     }
     return [...bySection.entries()]
   }, [fields])
-  const editedCount = fields.filter((f) => f.key in overrides).length + (overrides.hideSignatures ? 1 : 0)
+  const hidden = useMemo(() => hiddenImageSet(overrides), [overrides])
+  const editedCount = fields.filter((f) => f.key in overrides).length + (overrides.hideSignatures ? 1 : 0) + hidden.size
+
+  /** Remove (hide) or restore one of the certificate's own images. */
+  function setImageHidden(id, hide) {
+    const next = new Set(hidden)
+    if (hide) next.add(id)
+    else next.delete(id)
+    const nextOverrides = { ...overrides, hiddenImages: [...next] }
+    if (!next.size) delete nextOverrides.hiddenImages
+    onOverridesChange(nextOverrides)
+  }
+
+  /** Restore built-in images, dropping any movable copies made of them (so they don't show twice). */
+  function restoreImages(ids) {
+    const restoring = new Set(ids)
+    const next = [...hidden].filter((id) => !restoring.has(id))
+    const nextOverrides = { ...overrides, hiddenImages: next }
+    if (!next.length) delete nextOverrides.hiddenImages
+    onOverridesChange(nextOverrides)
+    if (images.some((img) => restoring.has(img.sourceId))) onImagesChange(images.filter((img) => !restoring.has(img.sourceId)))
+  }
+
+  /**
+   * Make a built-in logo movable/resizable: it's hidden from the template and
+   * re-added as a placed image with the same picture, at the same spot and
+   * size — so nothing moves until you drag it.
+   */
+  async function editBuiltInImage(box) {
+    const assets = await loadCertificateAssets()
+    const dataUrl = box.id === LOGO_ID ? assets.logo : assets.complianceStripPieces[box.id]
+    if (!dataUrl) return
+    const id = `builtin-${box.id}-${Date.now()}`
+    onImagesChange([...images, { id, name: box.name, dataUrl, x: box.x, y: box.y, w: box.w, h: box.h, sourceId: box.id }])
+    setImageHidden(box.id, true)
+    setSelectedImageId(id)
+  }
 
   function setText(key, value, defaultValue) {
     const next = { ...overrides }
@@ -153,13 +192,13 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-gray-500">
           {rendering ? 'Updating preview…' : renderError || 'Up to date'}
-          {editedCount > 0 && <> · <strong className="text-amber-700">{editedCount} text edit(s) applied</strong></>}
+          {editedCount > 0 && <> · <strong className="text-amber-700">{editedCount} edit(s) applied</strong></>}
           {images.length > 0 && <> · <strong className="text-amber-700">{images.length} image(s) added</strong></>}
         </span>
         <div className="flex gap-2">
           {editedCount > 0 && (
             <GhostButton type="button" onClick={() => onOverridesChange({})}>
-              Reset all text edits
+              Reset all edits
             </GhostButton>
           )}
           <GhostButton
@@ -186,9 +225,11 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
               }}
               onDragLeave={() => setDropActive(false)}
               onDrop={handleDrop}
+              onPointerDown={() => setSelectedImageId(null)}
             >
               <canvas ref={canvasRef} aria-label="Certificate preview" className="absolute inset-0 h-full w-full" />
               {!hasPreview && <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">Rendering preview…</div>}
+              {editing && <BuiltInImagesLayer hidden={hidden} onHide={(id) => setImageHidden(id, true)} onEdit={editBuiltInImage} />}
               {editing && <PlacedImagesLayer images={images} onChange={onImagesChange} selectedId={selectedImageId} onSelect={setSelectedImageId} />}
               {dropActive && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-brand-green/10 text-sm font-semibold text-brand-green-dark">
@@ -232,7 +273,7 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
                       className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs ${img.id === selectedImageId ? 'border-brand-green bg-brand-green-light' : 'border-gray-200'}`}
                     >
                       <button type="button" onClick={() => setSelectedImageId(img.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                        <img src={img.dataUrl} alt="" className="h-6 w-10 shrink-0 object-contain" />
+                        <img src={img.dataUrl} alt="" className="h-6 w-10 shrink-0 rounded bg-gray-300 object-contain p-0.5" />
                         <span className="truncate text-gray-700">{img.name}</span>
                       </button>
                       <button type="button" onClick={() => removeImage(img.id)} className="shrink-0 text-gray-400 hover:text-red-600" aria-label={`Remove ${img.name}`}>
@@ -242,6 +283,59 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
                   ))}
                 </ul>
               )}
+            </div>
+
+            <div className="mb-4">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-green">Built-in images</div>
+              <p className="mb-2 text-xs text-gray-500">
+                On the certificate, click a logo to move or resize it, or click its ✕ to remove it. Changed logos are listed here to restore.
+              </p>
+              {[
+                [LOGO_ID, 'EnviroCycle logo (header)'],
+                [ICONS_ID, 'Stat icons'],
+              ].map(([id, label]) => (
+                <label key={id} className="mb-1.5 flex cursor-pointer items-center gap-2 text-xs text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={!hidden.has(id)}
+                    onChange={(e) => (e.target.checked ? restoreImages([id]) : setImageHidden(id, true))}
+                    className="h-4 w-4 accent-brand-green"
+                  />
+                  {label}
+                  {images.some((img) => img.sourceId === id) && <span className="text-gray-400">(moved/resized)</span>}
+                </label>
+              ))}
+              {(() => {
+                const removed = BUILT_IN_IMAGES.filter((img) => img.id.startsWith('strip:') && hidden.has(img.id))
+                return (
+                  <div className="mt-2">
+                    <div className="mb-1 flex items-center justify-between text-[11px] text-gray-500">
+                      <span>
+                        Compliance logos: {COMPLIANCE_LOGOS.length - removed.length} of {COMPLIANCE_LOGOS.length} shown
+                      </span>
+                      {removed.length > 0 && (
+                        <button type="button" onClick={() => restoreImages(removed.map((img) => img.id))} className="font-medium text-brand-green hover:underline">
+                          Restore all
+                        </button>
+                      )}
+                    </div>
+                    {removed.length > 0 && (
+                      <ul className="flex flex-col gap-1">
+                        {removed.map((img) => (
+                          <li key={img.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500">
+                            <span className="truncate">
+                              {img.name} <span className="text-gray-400">{images.some((p) => p.sourceId === img.id) ? '(moved/resized)' : '(removed)'}</span>
+                            </span>
+                            <button type="button" onClick={() => restoreImages([img.id])} className="shrink-0 font-medium text-brand-green hover:underline">
+                              Restore
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
 
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-green">Text</div>

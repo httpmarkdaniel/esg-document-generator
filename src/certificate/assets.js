@@ -21,6 +21,8 @@ import sigSanchezUrl from '../assets/certificate/sig-sanchez.png'
 import sigLaconsayUrl from '../assets/certificate/sig-laconsay.png'
 import sigBweheniUrl from '../assets/certificate/sig-bweheni.png'
 
+import { COMPLIANCE_LOGOS } from './builtInImages.js'
+
 export { ASSET_DIMENSIONS } from './assetDimensions.js'
 
 const urlCache = new Map()
@@ -39,6 +41,35 @@ function loadAsDataUrl(url) {
         }),
     )
   urlCache.set(url, promise)
+  return promise
+}
+
+const stripPiecesCache = new Map()
+
+/**
+ * Each compliance logo cut out of the strip image (full strip height), as a
+ * PNG data URL keyed by its id — used when some logos are removed and the
+ * rest are drawn one by one. See builtInImages.js.
+ */
+function cropStripPieces(stripDataUrl) {
+  if (stripPiecesCache.has(stripDataUrl)) return stripPiecesCache.get(stripDataUrl)
+  const promise = new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const pieces = {}
+      for (const logo of COMPLIANCE_LOGOS) {
+        const canvas = document.createElement('canvas')
+        canvas.width = logo.to - logo.from
+        canvas.height = img.naturalHeight
+        canvas.getContext('2d').drawImage(img, logo.from, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height)
+        pieces[logo.id] = canvas.toDataURL('image/png')
+      }
+      resolve(pieces)
+    }
+    img.onerror = () => reject(new Error('Could not load the compliance logo strip.'))
+    img.src = stripDataUrl
+  })
+  stripPiecesCache.set(stripDataUrl, promise)
   return promise
 }
 
@@ -61,5 +92,6 @@ export async function loadCertificateAssets() {
     loadAsDataUrl(sigLaconsayUrl),
     loadAsDataUrl(sigBweheniUrl),
   ])
-  return { logo, complianceStrip, iconTree, iconEnergy, iconRecycle, iconFootprint, iconCo2, iconCloud, iconCar, iconLandfill, iconWater, sigSanchez, sigLaconsay, sigBweheni }
+  const complianceStripPieces = await cropStripPieces(complianceStrip)
+  return { logo, complianceStrip, complianceStripPieces, iconTree, iconEnergy, iconRecycle, iconFootprint, iconCo2, iconCloud, iconCar, iconLandfill, iconWater, sigSanchez, sigLaconsay, sigBweheni }
 }

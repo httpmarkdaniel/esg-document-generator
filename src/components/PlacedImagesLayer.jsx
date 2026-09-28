@@ -64,7 +64,8 @@ export function PlacedImagesLayer({ images, onChange, selectedId, onSelect }) {
   }
 
   return (
-    <div ref={layerRef} className="absolute inset-0" onPointerDown={() => onSelect(null)}>
+    // The layer itself lets clicks through (to the built-in logo targets below); only the image boxes catch them.
+    <div ref={layerRef} className="pointer-events-none absolute inset-0">
       {images.map((img) => {
         const selected = img.id === selectedId
         return (
@@ -74,7 +75,7 @@ export function PlacedImagesLayer({ images, onChange, selectedId, onSelect }) {
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
-            className={`absolute cursor-move touch-none select-none ${selected ? 'outline outline-2 outline-brand-green' : 'outline outline-1 outline-dashed outline-brand-green/50 hover:outline-brand-green'}`}
+            className={`pointer-events-auto absolute cursor-move touch-none select-none ${selected ? 'outline outline-2 outline-brand-green' : 'outline outline-1 outline-dashed outline-brand-green/50 hover:outline-brand-green'}`}
             style={{
               left: `${(img.x / PAGE_W_MM) * 100}%`,
               top: `${(img.y / PAGE_H_MM) * 100}%`,

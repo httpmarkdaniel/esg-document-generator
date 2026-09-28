@@ -12,6 +12,7 @@
 import autoTable from 'jspdf-autotable'
 import { BRAND, SIGNATORIES } from '../lib/brand.js'
 import { resolveCertificateText } from './certificateText.js'
+import { LOGO_ID, ICONS_ID, COMPLIANCE_LOGOS, complianceLogoBoxes, hiddenImageSet } from './builtInImages.js'
 import { ASSET_DIMENSIONS } from './assetDimensions.js'
 
 const MARGIN = 14
@@ -144,7 +145,7 @@ function drawRecipientBlock(doc, T, y) {
 }
 
 /** Given-date line, signature row, disclaimer, compliance-logo strip, and bottom accent bar. Shared by all types. */
-function drawFooter(doc, assets, T, { showSignatures }) {
+function drawFooter(doc, assets, T, { showSignatures, hidden }) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
 
@@ -188,7 +189,16 @@ function drawFooter(doc, assets, T, { showSignatures }) {
   // Real compliance-logo strip (ISO/BSI/FDA/UN/etc.), extracted from the
   // reference PDF at its own exact size/position (page.get_image_info()):
   // ~203.4mm wide, top edge 21.44mm above the page bottom.
-  drawAsset(doc, assets, 'complianceStrip', pageWidth / 2, pageHeight - 21.44, 203.4, 'center')
+  // Logos removed in the preview editor are left out; the rest are drawn
+  // one by one, closed up and centered (see builtInImages.js).
+  if (!COMPLIANCE_LOGOS.some((l) => hidden.has(l.id))) {
+    drawAsset(doc, assets, 'complianceStrip', pageWidth / 2, pageHeight - 21.44, 203.4, 'center')
+  } else {
+    for (const box of complianceLogoBoxes(hidden)) {
+      const piece = assets?.complianceStripPieces?.[box.id]
+      if (piece) doc.addImage(piece, 'PNG', box.x, box.y, box.w, box.h, box.id, 'FAST')
+    }
+  }
 
   // Bottom accent bar — real height/position from the reference PDF's own
   // vector rect (3.6mm tall, not the page's full corner-to-corner margin).
@@ -231,6 +241,7 @@ function statTileLabelLineCount(doc, label, w) {
  * on top of a separately-drawn circle.
  */
 function drawIconBadge(doc, assets, cx, cy, iconKey) {
+  if (assets?.hideIcons) return // "Stat icons" removed in the preview editor
   const iconImage = iconKey && assets?.[iconKey]
   if (!iconImage) {
     doc.setFillColor(...BRAND.navy)
@@ -442,7 +453,11 @@ const DRAWERS = {
  */
 export function drawCertificate(doc, assets, data) {
   const drawer = DRAWERS[data.certificateType] || DRAWERS.EIC
-  drawer(doc, assets, resolveCertificateText(data), { showSignatures: !data.textOverrides?.hideSignatures })
+  // Built-in images removed in the preview editor (see builtInImages.js).
+  const hidden = hiddenImageSet(data.textOverrides)
+  const drawAssets = { ...assets, hideIcons: hidden.has(ICONS_ID) }
+  if (hidden.has(LOGO_ID)) delete drawAssets.logo
+  drawer(doc, drawAssets, resolveCertificateText(data), { showSignatures: !data.textOverrides?.hideSignatures, hidden })
   drawPlacedImages(doc, data.placedImages)
 }
 
