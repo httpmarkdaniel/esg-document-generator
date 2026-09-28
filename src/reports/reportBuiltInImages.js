@@ -2,9 +2,9 @@
 // move — the report's counterpart of certificate/builtInImages.js. Removed
 // ones are listed by id in `textOverrides.hiddenImages`.
 //
-// The letterhead and the gradient bar repeat on every page, so they can only
-// be removed (from all pages). The form code and each logo in the two-row
-// compliance strip appear once and can also be moved/resized.
+// The header (letterhead, top bar) and footer (compliance strip) repeat on
+// every page, so they can only be removed — from all pages. The form code is
+// text, edited in the Text section.
 //
 // The compliance strip is ONE image (compliance-strip.png, 1074×136 px, two
 // rows of logos). The ranges below are where each logo sits in it, found from
@@ -14,7 +14,6 @@
 
 export const LETTERHEAD_ID = 'letterhead'
 export const GRADIENT_BAR_ID = 'gradientBar'
-export const FORM_CODE_ID = 'formCode'
 
 export const STRIP_PX_WIDTH = 1074
 const ROW_BANDS = [
@@ -57,7 +56,6 @@ export const REPORT_COMPLIANCE_LOGOS = [
 export const REPORT_BUILT_IN_IMAGES = [
   { id: LETTERHEAD_ID, name: 'Letterhead (every page)' },
   { id: GRADIENT_BAR_ID, name: 'Top colour bar (every page)' },
-  { id: FORM_CODE_ID, name: 'Form code' },
   ...REPORT_COMPLIANCE_LOGOS.map(({ id, name }) => ({ id, name })),
 ]
 

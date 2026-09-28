@@ -3,8 +3,7 @@
 // without pulling in the browser-only (fetch/FileReader) image loading
 // code — useful for Node-based testing of the drawing logic.
 export const REPORT_ASSET_DIMENSIONS = {
-  letterhead: { width: 523, height: 62 },
+  logoDark: { width: 839, height: 148 },
   complianceStrip: { width: 1074, height: 136 },
-  formCode: { width: 135, height: 27 },
   gradientBar: { width: 1120, height: 21 },
 }

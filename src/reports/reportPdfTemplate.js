@@ -1,15 +1,19 @@
-// ESG Report TEMPLATE — PDF version. Recreates the structure AND look of
-// the real "Carbon Abatement - Client Template.pdf" using that PDF's own
-// embedded images for the letterhead (logo + contact info), the
-// teal-to-blue gradient top bar, the two-row compliance-logo strip, and
-// the form-code footer text — not redrawn, so these match exactly. Body
-// content: Client / Prepared by / Reporting Period header, 1. Introduction,
-// 2. Detailed Impact Breakdown (asset-category table + subtotal),
-// 3. Recycled Materials, 4. Methodology, 5. Environmental Impact
-// narrative, 6. Conclusion, 3-signatory sign-off (with role labels).
-// Serif body text and near-black headings — a very different look from
-// the certificates' rounded sans-serif/green branding, matching the
-// reference.
+// ESG Report TEMPLATE — PDF version, laid out after the real
+// "Carbon Abatement - Client Template.pdf" (positions, sizes and spacing
+// measured from it):
+//
+// • Every page: the teal-to-blue top bar and the letterhead (logo + company
+//   line + phone/email/website) as the header, and the form code + two-row
+//   compliance-logo strip as the footer.
+// • Body in Lora (the reference's typeface): 10pt text on a 4.5mm line, 11pt
+//   bold numbered headings, indented sub-headings / bullets, bold figures.
+// • Sign-off: role labels, then each signatory's pen signature over their
+//   name and title (the look of their signed name block).
+//
+// The letterhead is rebuilt sharp instead of reusing the reference's own
+// ~96-dpi letterhead picture: the logo is the high-resolution EnviroCycle
+// logo (lettering recoloured dark for a white page) and the company/contact
+// lines are real text.
 //
 // Every free-text line comes from resolveReportText (defaults + preview
 // editor overrides); built-in images the editor removed are skipped, and
@@ -20,371 +24,496 @@
 
 import autoTable from 'jspdf-autotable'
 import { formatNumber } from '../lib/format.js'
-import { BRAND, SIGNATORIES } from '../lib/brand.js'
+import { SIGNATORIES } from '../lib/brand.js'
 import { REPORT_ASSET_DIMENSIONS } from './assetDimensions.js'
 import { ASSET_DIMENSIONS } from '../certificate/assetDimensions.js'
-import { introductionParagraphs, METHODOLOGY_SECTIONS, CONCLUSION_PARAGRAPHS } from './methodology.js'
+import { METHODOLOGY_SECTIONS, CONCLUSION_PARAGRAPHS } from './methodology.js'
 import { resolveReportText } from './reportText.js'
-import { LETTERHEAD_ID, GRADIENT_BAR_ID, FORM_CODE_ID, REPORT_COMPLIANCE_LOGOS, reportStripLogoBoxes } from './reportBuiltInImages.js'
+import { wrapRich, drawRichLines } from './richText.js'
+import { LETTERHEAD_ID, GRADIENT_BAR_ID, REPORT_COMPLIANCE_LOGOS, reportStripLogoBoxes } from './reportBuiltInImages.js'
 
-const MARGIN = 18
-const FONT = 'times'
-const BLACK = [15, 15, 15]
+const PAGE_W = 210
+const PAGE_H = 297
+const FONT = 'Lora'
+const BLACK = [0, 0, 0]
 
-// Guards against drawing the letterhead twice on the same page — both
-// ensureSpace() and autoTable's own didDrawPage hook can fire back-to-back
-// right after a page break, which would otherwise stack two copies of the
-// (partially transparent) letterhead PNG and make it look ghosted/faded.
-let lastLetterheadPage = -1
-let pageAssets = null
+// Text columns, from the reference.
+const X_TEXT = 22.5 // body paragraphs, header block
+const X_HEAD = 28.9 // "1." of a section heading, section descriptions
+const X_HEAD_TEXT = 35.2 // section heading text, sub-headings, 4.x paragraphs
+const X_BULLET = 41.6 // the "o" bullet
+const X_BULLET_TEXT = 47.9
+const X_RIGHT = PAGE_W - 22.5
+
+const TEXT_SIZE = 10
+const LINE = 4.5 // mm between baselines at 10pt
+const TOP = 28.6 // first body baseline on a page
+const BOTTOM = 259 // last allowed body baseline (the footer starts at ~264mm)
+
+// Header / footer geometry, measured from the reference.
+const BAR = { x: -3.4, y: 0.3, w: 222, h: 5.3 }
+const LOGO = { w: 47.7, cy: 10.4 }
+const LH_ADDRESS_Y = 17.4 // baseline of the company/address line
+const LH_CONTACT_Y = 20.0 // baseline of the phone/email/website line
+const LH_ADDRESS_MAX_W = 136.4
+const FORM_CODE = { x: 4.6, y1: 267.5, y2: 271.1, w: 33.3 }
+const STRIP = { x: 42.1, y: 271.9, w: 125.4 }
+
+const LH_GREY = [70, 70, 70]
+const LH_LIGHT = [120, 120, 120]
+const LH_GREEN = [46, 125, 50]
+const SIG_NAVY = [20, 42, 78]
+
 // Built-in images removed in the preview editor, and the page boxes of the
 // built-in images actually drawn (returned to the editor so it can put
-// remove/move targets exactly on them). Reset per document in drawReportPdf.
+// remove targets exactly on them). Reset per document in drawReportPdf.
 let hidden = new Set()
 let builtInBoxes = []
 
-const currentPage = (doc) => doc.internal.getCurrentPageInfo().pageNumber - 1
+// ---------------------------------------------------------------------------
+// Body flow: a cursor (page baseline `y`) plus the kind of the last block, so
+// the gap before the next block matches the reference's spacing.
+// ---------------------------------------------------------------------------
 
-const LETTERHEAD_WIDTH = 90
-const GRADIENT_BAR_HEIGHT = 4
-const LETTERHEAD_HEIGHT = GRADIENT_BAR_HEIGHT + 4 + LETTERHEAD_WIDTH * (REPORT_ASSET_DIMENSIONS.letterhead.height / REPORT_ASSET_DIMENSIONS.letterhead.width) + 6
+// Baseline-to-baseline gap from the previous block's last line to the next block's first line.
+const GAPS = {
+  'heading>sub': 4.6,
+  'heading>para': 8.7,
+  'heading>desc': 8.7,
+  'sub>para': 8.7,
+  'sub>desc': 8.7,
+  'sub>bullet': 4.6,
+  'sub>sub': 9,
+  'para>heading': 9.4,
+  'desc>heading': 9.4,
+  'bullet>bullet': 4.5,
+  'bullet>heading': 13.1,
+  'bullet>sub': 8.8,
+  'caption>heading': 11,
+  'caption>sub': 9.4,
+  'title>label': 9.2,
+  'label>value': 4.5,
+  'value>value': 4.5,
+  'value>label': 9,
+  'value>heading': 14,
+  'table>caption': 5,
+  'desc>table': 9,
+  'heading>para5': 6,
+  'para5>sub': 8.8,
+  'heading>concl': 4.6,
+  'concl>signoff': 12.7,
+  'para>signoff': 12.7,
+}
+const gapBetween = (prev, next) => GAPS[`${prev}>${next}`] ?? 9
 
-/** Real gradient bar + real centered letterhead image (logo + contact info) — repeated on every page. */
-function drawLetterhead(doc, assets) {
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const pageNumber = doc.internal.getCurrentPageInfo().pageNumber
-  if (pageNumber === lastLetterheadPage) return LETTERHEAD_HEIGHT
-  lastLetterheadPage = pageNumber
+function newFlow(doc) {
+  return { doc, y: TOP, last: 'top' }
+}
 
-  // A removed letterhead / bar keeps its space, so the page layout doesn't shift.
-  if (assets?.gradientBar && !hidden.has(GRADIENT_BAR_ID)) {
-    doc.addImage(assets.gradientBar, 'PNG', 0, 0, pageWidth, GRADIENT_BAR_HEIGHT)
-    builtInBoxes.push({ id: GRADIENT_BAR_ID, name: 'Top colour bar', page: pageNumber - 1, x: 0, y: 0, w: pageWidth, h: GRADIENT_BAR_HEIGHT })
+// A table caption may run a little below BOTTOM (the footer starts ~264mm) so it stays with its table.
+const CAPTION_BOTTOM = BOTTOM + 3
+
+/** Move to where a block of `kind` starts; start a new page if its first `height` mm won't fit. */
+function place(flow, kind, height) {
+  if (flow.last !== 'top') flow.y += gapBetween(flow.last, kind)
+  if (flow.y + height > (kind === 'caption' ? CAPTION_BOTTOM : BOTTOM)) {
+    flow.doc.addPage()
+    flow.y = TOP
   }
+  flow.last = kind
+}
 
-  let y = GRADIENT_BAR_HEIGHT + 4
-  if (assets?.letterhead) {
-    const dim = REPORT_ASSET_DIMENSIONS.letterhead
-    const h = LETTERHEAD_WIDTH * (dim.height / dim.width)
-    if (!hidden.has(LETTERHEAD_ID)) {
-      const x = pageWidth / 2 - LETTERHEAD_WIDTH / 2
-      doc.addImage(assets.letterhead, 'PNG', x, y, LETTERHEAD_WIDTH, h)
-      builtInBoxes.push({ id: LETTERHEAD_ID, name: 'Letterhead', page: pageNumber - 1, x, y, w: LETTERHEAD_WIDTH, h })
+/** Wrapped rich-text block; breaks onto the next page between lines when needed. */
+function textBlock(flow, kind, text, { x = X_TEXT, size = TEXT_SIZE, lineHeight = LINE, align = 'left' } = {}) {
+  if (!text) return
+  const { doc } = flow
+  const lines = wrapRich(doc, text, { font: FONT, size, maxWidth: X_RIGHT - x })
+  place(flow, kind, 0)
+  lines.forEach((line, i) => {
+    if (i > 0) {
+      flow.y += lineHeight
+      if (flow.y > BOTTOM) {
+        doc.addPage()
+        flow.y = TOP
+      }
     }
-    y += h
-  }
-
-  return y + 6
+    doc.setTextColor(...BLACK)
+    drawRichLines(doc, [line], { font: FONT, size, x, y: flow.y, lineHeight, align, centerX: PAGE_W / 2 })
+  })
 }
 
-/** Advance to a new page if `needed` mm of vertical space isn't left, redrawing the letterhead. */
-function ensureSpace(doc, y, needed) {
-  const pageHeight = doc.internal.pageSize.getHeight()
-  if (y + needed > pageHeight - MARGIN) {
-    doc.addPage()
-    return drawLetterhead(doc, pageAssets) + 4
-  }
-  return y
-}
-
-// heading / subheading / paragraph / bullet print nothing (and take no space)
-// for an empty string — that's how the preview editor removes a line.
-
-function heading(doc, y, text) {
-  if (!text) return y
-  y = ensureSpace(doc, y, 14)
+/** "1. Introduction": the number at X_HEAD, the words at X_HEAD_TEXT, bold 11pt. */
+function heading(flow, text) {
+  if (!text) return
+  place(flow, 'heading', 6)
+  const { doc } = flow
   doc.setTextColor(...BLACK)
   doc.setFont(FONT, 'bold')
-  doc.setFontSize(13)
-  doc.text(text, MARGIN, y)
-  return y + 7
+  doc.setFontSize(11)
+  const m = text.match(/^(\d+\.)\s*(.*)$/)
+  if (m) {
+    doc.text(m[1], X_HEAD, flow.y)
+    doc.text(m[2], X_HEAD_TEXT, flow.y)
+  } else doc.text(text, X_HEAD, flow.y)
 }
 
-function subheading(doc, y, text) {
-  if (!text) return y
-  y = ensureSpace(doc, y, 10)
+function subheading(flow, text) {
+  if (!text) return
+  textBlock(flow, 'sub', `**${text}**`, { x: X_HEAD_TEXT })
+}
+
+/** Hollow "o" bullet with its (rich, wrapped) text. */
+function bullet(flow, text) {
+  if (!text) return
+  const { doc } = flow
+  const lines = wrapRich(doc, text, { font: FONT, size: TEXT_SIZE, maxWidth: X_RIGHT - X_BULLET_TEXT })
+  place(flow, 'bullet', 0)
   doc.setTextColor(...BLACK)
-  doc.setFont(FONT, 'bold')
-  doc.setFontSize(10.5)
-  doc.text(text, MARGIN, y)
-  return y + 5.5
-}
-
-function paragraph(doc, y, text, opts = {}) {
-  if (!text) return y
-  const pageWidth = doc.internal.pageSize.getWidth()
-  doc.setFont(FONT, opts.bold ? 'bold' : 'normal')
-  doc.setFontSize(opts.size || 9.5)
-  const lines = doc.splitTextToSize(text, pageWidth - MARGIN * 2)
-  y = ensureSpace(doc, y, lines.length * 4.6 + 3)
-  doc.setTextColor(...(opts.color || BLACK))
-  doc.text(lines, MARGIN, y)
-  return y + lines.length * 4.6 + 3
-}
-
-/** Hollow "o" bullet, matching the reference's sub-bullet style. */
-function bullet(doc, y, text) {
-  if (!text) return y
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const indent = MARGIN + 6
   doc.setFont(FONT, 'normal')
-  doc.setFontSize(9.5)
-  const lines = doc.splitTextToSize(text, pageWidth - MARGIN - indent)
-  y = ensureSpace(doc, y, lines.length * 4.6 + 1.5)
-  doc.setTextColor(...BLACK)
-  doc.text('o', MARGIN, y)
-  doc.text(lines, indent, y)
-  return y + lines.length * 4.6 + 1.5
+  doc.setFontSize(TEXT_SIZE)
+  doc.text('o', X_BULLET, flow.y)
+  lines.forEach((line, i) => {
+    if (i > 0) flow.y += LINE
+    drawRichLines(doc, [line], { font: FONT, size: TEXT_SIZE, x: X_BULLET_TEXT, y: flow.y, lineHeight: LINE })
+  })
 }
 
-/** Draw text unless it's empty (an empty string is how the preview editor removes a line). */
-function drawText(doc, text, x, y, options) {
-  if (text) doc.text(text, x, y, options)
+/** An autoTable in the report's style, placed after the current block; the flow continues below it. */
+function table(flow, options) {
+  const { doc } = flow
+  place(flow, 'table', 12)
+  autoTable(doc, {
+    startY: flow.y - 3.5,
+    margin: { left: X_TEXT, right: PAGE_W - X_RIGHT, top: TOP - 4, bottom: PAGE_H - BOTTOM },
+    theme: 'grid',
+    ...options,
+    styles: { font: FONT, textColor: BLACK, lineColor: BLACK, lineWidth: 0.1, valign: 'middle', ...options.styles },
+    headStyles: { fillColor: false, textColor: BLACK, fontStyle: 'bold', halign: 'center', valign: 'middle', ...options.headStyles },
+  })
+  // The next block (the caption) sits 5mm under the table's bottom edge.
+  flow.y = doc.lastAutoTable.finalY + 5 - gapBetween('table', 'caption')
+  flow.last = 'table'
 }
 
-// E-signatures on the sign-off lines: one shared scale for all 3 images so
-// they keep their real relative sizes (the tallest come out ~10mm), dipping
-// slightly below the line like a pen signature. Same images as the certificate.
-const SIGNATURE_MM_PER_PX = 10 / 249
-const SIGNATURE_LINE_OVERLAP = 0.18
+// ---------------------------------------------------------------------------
+// Header / footer (every page)
+// ---------------------------------------------------------------------------
 
-function drawSignature(doc, assets, key, cx, lineY) {
-  const image = assets?.[key]
-  if (!image) return
-  const dim = ASSET_DIMENSIONS[key]
-  const w = dim.width * SIGNATURE_MM_PER_PX
-  const h = dim.height * SIGNATURE_MM_PER_PX
-  doc.addImage(image, 'PNG', cx - w / 2, lineY + h * SIGNATURE_LINE_OVERLAP - h, w, h)
+/** Small green contact icons, drawn as vector shapes (crisp at any zoom). */
+function drawIcon(doc, kind, x, baseline) {
+  const s = 1.7
+  const top = baseline - s + 0.1
+  doc.setDrawColor(...LH_GREEN)
+  doc.setFillColor(...LH_GREEN)
+  doc.setLineWidth(0.18)
+  if (kind === 'phone') {
+    // handset: a thick arc with two small pads
+    doc.setLineWidth(0.45)
+    doc.lines([[0.35, 1.1, 1.25, 1.55, 1.55, 1.55]], x + 0.1, top + 0.1, [1, 1], 'S')
+    doc.circle(x + 0.25, top + 0.15, 0.3, 'F')
+    doc.circle(x + 1.6, top + 1.55, 0.3, 'F')
+  } else if (kind === 'mail') {
+    doc.rect(x, top + 0.2, s + 0.4, s - 0.4, 'S')
+    doc.line(x, top + 0.2, x + (s + 0.4) / 2, top + 0.95)
+    doc.line(x + s + 0.4, top + 0.2, x + (s + 0.4) / 2, top + 0.95)
+  } else {
+    // website: a small screen with a globe
+    doc.rect(x, top, s + 0.9, s - 0.2, 'S')
+    doc.circle(x + (s + 0.9) / 2, top + (s - 0.2) / 2, 0.55, 'S')
+    doc.line(x + (s + 0.9) / 2 - 0.55, top + (s - 0.2) / 2, x + (s + 0.9) / 2 + 0.55, top + (s - 0.2) / 2)
+  }
+  return kind === 'web' ? s + 0.9 : kind === 'mail' ? s + 0.4 : 1.9
 }
+
+function drawHeader(doc, assets, T, page) {
+  if (assets?.gradientBar && !hidden.has(GRADIENT_BAR_ID)) {
+    doc.addImage(assets.gradientBar, 'PNG', BAR.x, BAR.y, BAR.w, BAR.h, 'gradientBar', 'FAST')
+    builtInBoxes.push({ id: GRADIENT_BAR_ID, name: 'Top colour bar', page, x: 0, y: 0, w: PAGE_W, h: BAR.h + 0.3 })
+  }
+  if (hidden.has(LETTERHEAD_ID)) return
+
+  // Logo — the high-res EnviroCycle logo, centered.
+  if (assets?.logoDark) {
+    const dim = REPORT_ASSET_DIMENSIONS.logoDark
+    const h = LOGO.w * (dim.height / dim.width)
+    doc.addImage(assets.logoDark, 'PNG', PAGE_W / 2 - LOGO.w / 2, LOGO.cy - h / 2, LOGO.w, h, 'logoDark', 'FAST')
+  }
+
+  // Company / address line — bold, sized to the reference's width.
+  if (T.lhAddress) {
+    doc.setFont('Poppins', 'semibold')
+    doc.setFontSize(10)
+    const size = Math.min(6.6, (10 * LH_ADDRESS_MAX_W) / doc.getTextWidth(T.lhAddress))
+    doc.setFontSize(size)
+    doc.setTextColor(...LH_GREY)
+    doc.text(T.lhAddress, PAGE_W / 2, LH_ADDRESS_Y, { align: 'center' })
+  }
+
+  // Phone | email | website, each with its icon; email/website underlined links.
+  const items = [
+    T.lhPhone && { icon: 'phone', text: T.lhPhone },
+    T.lhEmail && { icon: 'mail', text: T.lhEmail, url: `mailto:${T.lhEmail}` },
+    T.lhWebsite && { icon: 'web', text: T.lhWebsite, url: /^https?:/.test(T.lhWebsite) ? T.lhWebsite : `https://${T.lhWebsite}` },
+  ].filter(Boolean)
+  if (items.length) {
+    doc.setFont('Poppins', 'normal')
+    doc.setFontSize(5.8)
+    const sep = '  |  '
+    const iconW = { phone: 1.9, mail: 2.1, web: 2.6 }
+    const gap = 0.8
+    const widths = items.map((it) => iconW[it.icon] + gap + doc.getTextWidth(it.text))
+    const total = widths.reduce((s, w) => s + w, 0) + doc.getTextWidth(sep) * (items.length - 1)
+    let x = PAGE_W / 2 - total / 2
+    items.forEach((it, i) => {
+      if (i > 0) {
+        doc.setTextColor(...LH_LIGHT)
+        doc.text(sep, x, LH_CONTACT_Y)
+        x += doc.getTextWidth(sep)
+      }
+      drawIcon(doc, it.icon, x, LH_CONTACT_Y)
+      x += iconW[it.icon] + gap
+      doc.setTextColor(...LH_LIGHT)
+      doc.text(it.text, x, LH_CONTACT_Y)
+      const w = doc.getTextWidth(it.text)
+      if (it.url) {
+        doc.setDrawColor(...LH_LIGHT)
+        doc.setLineWidth(0.1)
+        doc.line(x, LH_CONTACT_Y + 0.35, x + w, LH_CONTACT_Y + 0.35)
+        doc.link(x, LH_CONTACT_Y - 2, w, 2.4, { url: it.url })
+      }
+      x += w
+    })
+  }
+  builtInBoxes.push({ id: LETTERHEAD_ID, name: 'Letterhead', page, x: PAGE_W / 2 - 70, y: 6, w: 140, h: 15 })
+}
+
+function drawFooter(doc, assets, T, page) {
+  // Form code — two short lines, bottom-left.
+  doc.setFont('Poppins', 'normal')
+  for (const [text, y, color] of [
+    [T.formCode, FORM_CODE.y1, [70, 70, 70]],
+    [T.formEffective, FORM_CODE.y2, [20, 20, 20]],
+  ]) {
+    if (!text) continue
+    doc.setFontSize(10)
+    doc.setFontSize(Math.min(7.6, (10 * FORM_CODE.w) / doc.getTextWidth(text)))
+    doc.setTextColor(...color)
+    doc.text(text, FORM_CODE.x, y)
+  }
+
+  // Compliance-logo strip (the reference's own image), bottom center.
+  if (!assets?.complianceStrip) return
+  const logoBoxes = reportStripLogoBoxes(hidden, STRIP)
+  if (!REPORT_COMPLIANCE_LOGOS.some((l) => hidden.has(l.id))) {
+    const dim = REPORT_ASSET_DIMENSIONS.complianceStrip
+    doc.addImage(assets.complianceStrip, 'PNG', STRIP.x, STRIP.y, STRIP.w, STRIP.w * (dim.height / dim.width), 'complianceStrip', 'FAST')
+  } else {
+    // Some logos removed: draw the rest one by one, closed up and centered per row.
+    for (const box of logoBoxes) {
+      const piece = assets.complianceStripPieces?.[box.id]
+      if (piece) doc.addImage(piece, 'PNG', box.x, box.y, box.w, box.h, box.id, 'FAST')
+    }
+  }
+  for (const box of logoBoxes) builtInBoxes.push({ id: box.id, name: box.name, page, x: box.x, y: box.y, w: box.w, h: box.h })
+}
+
+// ---------------------------------------------------------------------------
+// Sign-off
+// ---------------------------------------------------------------------------
+
+// The sign-off recreates each signatory's signed name block (public/eisg.png):
+// the pen signature sits over the printed name exactly as it does there.
+// Offsets are in that image's pixels — `dx`: signature center minus name
+// center; `drop`: signature bottom below the name's baseline (negative =
+// above) — scaled so its name cap height (17.2px) matches ours. The
+// signature PNGs are 3× crops of that same image.
+const NAME_SIZE = 11.5
+const NAME_CAP_MM = NAME_SIZE * (25.4 / 72) * 0.698 // Poppins cap height ≈ 0.698 em
+const SOURCE_CAP_PX = 17.2
+const MM_PER_SOURCE_PX = NAME_CAP_MM / SOURCE_CAP_PX
+const SIGNATURE_OFFSETS = {
+  sigSanchez: { dx: 37, drop: 7.8 },
+  sigLaconsay: { dx: -13, drop: -12.2 },
+  sigBweheni: { dx: 13.5, drop: 12.3 },
+}
+const SIGN_COLUMNS = [53.6, 113.2, 162.4] // name-block centers, from the reference
+
+function drawSignOff(flow, assets, T, showSignatures) {
+  const { doc } = flow
+  place(flow, 'signoff', 24)
+  const labelY = flow.y
+  const nameY = labelY + 19
+  SIGNATORIES.forEach((sig, i) => {
+    const cx = SIGN_COLUMNS[i]
+    doc.setTextColor(...BLACK)
+    doc.setFont(FONT, 'normal')
+    doc.setFontSize(9)
+    if (T[`role${i}`]) doc.text(T[`role${i}`], cx - 22, labelY)
+
+    doc.setTextColor(...SIG_NAVY)
+    doc.setFont('Poppins', 'semibold')
+    doc.setFontSize(NAME_SIZE)
+    if (T[`sig${i}Name`]) doc.text(T[`sig${i}Name`], cx, nameY, { align: 'center' })
+    doc.setFont('Poppins', 'normal')
+    doc.setFontSize(7)
+    if (T[`sig${i}Title`]) doc.text(T[`sig${i}Title`].toUpperCase(), cx, nameY + 3.9, { align: 'center' })
+
+    // Pen signature on top of the name (ink over print), only above the person's OWN name.
+    const offset = SIGNATURE_OFFSETS[sig.signature]
+    if (showSignatures && offset && T[`sig${i}Name`] === sig.name && assets?.[sig.signature]) {
+      const dim = ASSET_DIMENSIONS[sig.signature]
+      const w = (dim.width / 3) * MM_PER_SOURCE_PX
+      const h = (dim.height / 3) * MM_PER_SOURCE_PX
+      const sx = cx + offset.dx * MM_PER_SOURCE_PX - w / 2
+      const bottom = nameY + offset.drop * MM_PER_SOURCE_PX
+      doc.addImage(assets[sig.signature], 'PNG', sx, bottom - h, w, h)
+    }
+  })
+  flow.y = nameY + 3.9
+}
+
+// ---------------------------------------------------------------------------
+// The report
+// ---------------------------------------------------------------------------
 
 /**
  * Draws the whole report. Returns the layout the preview editor needs:
  * { pageCount, builtInBoxes } — where each built-in image landed (mm, per page).
  */
 export function drawReportPdf(doc, assets, data) {
-  const { client, rows, totals, recycledMaterials } = data
+  const { rows, totals, recycledMaterials } = data
   const T = resolveReportText(data)
-  const pageWidth = doc.internal.pageSize.getWidth()
-  pageAssets = assets
-  lastLetterheadPage = -1 // reset the per-page draw guard for this fresh document
   hidden = new Set(data.textOverrides?.hiddenImages || [])
   builtInBoxes = []
+  const flow = newFlow(doc)
 
-  let y = drawLetterhead(doc, assets)
-
-  // Centered title
-  doc.setTextColor(...BLACK)
-  doc.setFont(FONT, 'bold')
-  doc.setFontSize(17)
-  drawText(doc, T.title, pageWidth / 2, y, { align: 'center' })
-  y += 12
-
-  // Client / Prepared by / Reporting period block
-  doc.setFont(FONT, 'bold')
-  doc.setFontSize(9.5)
-  doc.setTextColor(...BLACK)
-  drawText(doc, T.clientLabel, MARGIN, y)
-  doc.setFont(FONT, 'normal')
-  drawText(doc, T.clientName, MARGIN + 20, y)
-  y += 5
-  if (client.addressLine1 !== '—') {
-    drawText(doc, T.clientAddress1, MARGIN + 20, y)
-    y += 5
+  // Title + Client / Prepared by / Reporting Period block
+  if (T.title) {
+    doc.setTextColor(...BLACK)
+    doc.setFont(FONT, 'bold')
+    doc.setFontSize(12)
+    doc.text(T.title, PAGE_W / 2, TOP + 0.7, { align: 'center' })
   }
-  if (client.cityStateZipCountry !== '—') {
-    drawText(doc, T.clientCity, MARGIN + 20, y)
-    y += 5
+  flow.y = TOP + 0.7
+  flow.last = 'title'
+  const group = (label, values) => {
+    const lines = [label && `**${label}**`, ...values].filter(Boolean)
+    if (!lines.length) return
+    lines.forEach((text, i) => textBlock(flow, i === 0 ? 'label' : 'value', text))
   }
-  y += 1.5
-  doc.setFont(FONT, 'bold')
-  drawText(doc, T.preparedLabel, MARGIN, y)
-  doc.setFont(FONT, 'normal')
-  drawText(doc, T.preparedName, MARGIN + 26, y)
-  y += 5
-  drawText(doc, T.preparedAddress, MARGIN + 26, y)
-  y += 6.5
-  doc.setFont(FONT, 'bold')
-  drawText(doc, T.periodLabel, MARGIN, y)
-  y += 5
-  doc.setFont(FONT, 'normal')
-  drawText(doc, T.itemsCollected, MARGIN, y)
-  y += 5
-  drawText(doc, T.reportIssued, MARGIN, y)
-  y += 9
+  group(T.clientLabel, [T.clientName, T.clientAddress1, T.clientAddress2, T.clientCity])
+  group(T.preparedLabel, [T.preparedName, T.preparedAddress])
+  group(T.periodLabel, [T.itemsCollected, T.reportIssued])
 
   // 1. Introduction
-  y = heading(doc, y, T.h1)
-  introductionParagraphs('').forEach((_, i) => (y = paragraph(doc, y, T[`intro${i}`])))
+  heading(flow, T.h1)
+  for (let i = 0; i < 3; i++) textBlock(flow, 'para', T[`intro${i}`])
 
   // 2. Detailed Impact Breakdown
-  y = heading(doc, y, T.h2)
-  y = subheading(doc, y, T.h21)
-  y = paragraph(doc, y, T.p21)
+  heading(flow, T.h2)
+  subheading(flow, T.h21)
+  textBlock(flow, 'desc', T.p21, { x: X_HEAD })
 
-  const tableRows = rows.map((r, i) => [
+  const n1 = (v) => formatNumber(v, 1)
+  const body = rows.map((r, i) => [
     String(i + 1),
     r.item,
-    formatNumber(r.qtyKg, 1),
-    formatNumber(r.metalKg, 1),
-    formatNumber(r.plasticKg, 1),
-    formatNumber(r.glassKg, 1),
-    formatNumber(r.electronicsKg, 1),
-    formatNumber(r.carbonFootprintKgCO2e, 1),
-    formatNumber(r.recycledEmissionsKgCO2e, 1),
-    formatNumber(r.netCarbonAbatedKgCO2e, 1),
+    n1(r.qtyKg),
+    n1(r.metalKg),
+    n1(r.plasticKg),
+    n1(r.glassKg),
+    n1(r.electronicsKg),
+    n1(r.carbonFootprintKgCO2e),
+    n1(r.recycledEmissionsKgCO2e),
+    n1(r.netCarbonAbatedKgCO2e),
     formatNumber(r.waterSavedLiters, 0),
-    formatNumber(r.energySavedKwh, 1),
-    formatNumber(r.landfillAvertedKg, 1),
+    n1(r.energySavedKwh),
+    n1(r.landfillAvertedKg),
   ])
-  tableRows.push([
-    'Total',
-    '',
-    formatNumber(totals.qtyKg, 1),
-    formatNumber(totals.metalKg, 1),
-    formatNumber(totals.plasticKg, 1),
-    formatNumber(totals.glassKg, 1),
-    formatNumber(totals.electronicsKg, 1),
-    formatNumber(totals.carbonFootprintKgCO2e, 1),
-    formatNumber(totals.recycledEmissionsKgCO2e, 1),
-    formatNumber(totals.netCarbonAbatedKgCO2e, 1),
+  body.push([
+    { content: 'Total', colSpan: 2, styles: { halign: 'center', fontSize: 8 } },
+    n1(totals.qtyKg),
+    n1(totals.metalKg),
+    n1(totals.plasticKg),
+    n1(totals.glassKg),
+    n1(totals.electronicsKg),
+    n1(totals.carbonFootprintKgCO2e),
+    n1(totals.recycledEmissionsKgCO2e),
+    n1(totals.netCarbonAbatedKgCO2e),
     formatNumber(totals.waterSavedLiters, 0),
-    formatNumber(totals.energySavedKwh, 1),
-    formatNumber(totals.landfillAvertedKg, 1),
+    n1(totals.energySavedKwh),
+    n1(totals.landfillAvertedKg),
   ])
-
-  autoTable(doc, {
-    startY: y,
-    margin: { left: MARGIN, right: MARGIN, top: LETTERHEAD_HEIGHT + 4 },
+  table(flow, {
     head: [
-      ['No.', 'Item', 'Qty\n(kg)', 'Metal\nWeight\n(kg)', 'Plastic\nWeight\n(kg)', 'Glass\nWeight\n(kg)', 'Electronics\nWeight (kg)', 'Carbon\nFootprint\n(kg CO2e)', 'Recycled\nEmissions\n(kg CO2e)', 'Net Carbon\nAbated\n(kg CO2e)', 'Water\nSaved (L)', 'Energy\nSaved\n(kWh)', 'Landfill\nAverted\n(kg)'],
+      ['No.', 'Item', 'Qty (kg)', 'Metal\nWeight\n(kg)', 'Plastic\nWeight\n(kg)', 'Glass\nWeight\n(kg)', 'Electronics\nWeight (kg)', 'Carbon\nFootprint\n(kg CO2e)', 'Recycled\nEmissions\n(kg CO2e)', 'Net Carbon\nAbated\n(kg CO2e)', 'Water\nSaved (L)', 'Energy\nSaved\n(kWh)', 'Landfill\nAverted\n(kg)'],
     ],
-    body: tableRows,
-    theme: 'grid',
-    styles: { font: FONT, fontSize: 6.3, textColor: BLACK, cellPadding: 1.2, halign: 'center', lineColor: BLACK, lineWidth: 0.15 },
-    headStyles: { fillColor: false, textColor: BLACK, fontStyle: 'bold', halign: 'center' },
-    columnStyles: { 0: { cellWidth: 8 }, 1: { halign: 'left', cellWidth: 20 } },
+    body,
+    styles: { fontSize: 7, cellPadding: 1.1, halign: 'center' },
+    headStyles: { fontSize: 7 },
+    columnStyles: { 0: { cellWidth: 6.5 }, 1: { halign: 'left', cellWidth: 26 } },
+    rowPageBreak: 'avoid',
     didParseCell: (hook) => {
-      if (hook.row.index === tableRows.length - 1 && hook.section === 'body') {
-        hook.cell.styles.fontStyle = 'bold'
-      }
-    },
-    didDrawPage: () => {
-      // autoTable's own pagination bypasses ensureSpace — redraw the letterhead on any page it adds.
-      drawLetterhead(doc, pageAssets)
+      if (hook.section === 'body' && hook.row.index === body.length - 1) hook.cell.styles.fontStyle = 'bold'
     },
   })
-  y = doc.lastAutoTable.finalY + 3
-  y = paragraph(doc, y, T.table1Caption, { size: 7.5, color: BRAND.muted })
+  textBlock(flow, 'caption', T.table1Caption, { size: 8, align: 'center' })
 
   // 2.2 Subtotal
-  y = subheading(doc, y, T.h22)
-  for (let i = 0; i < 7; i++) y = bullet(doc, y, T[`b22_${i}`])
-  y += 2
+  subheading(flow, T.h22)
+  for (let i = 0; i < 7; i++) bullet(flow, T[`b22_${i}`])
 
   // 3. Recycled Materials
-  y = heading(doc, y, T.h3)
-  y = paragraph(doc, y, T.p3)
-  autoTable(doc, {
-    startY: y,
-    margin: { left: MARGIN, right: MARGIN, top: LETTERHEAD_HEIGHT + 4 },
+  heading(flow, T.h3)
+  textBlock(flow, 'desc', T.p3, { x: X_HEAD })
+  table(flow, {
     head: [['Material', 'Quantity (kg)', 'Environmental Benefit']],
-    body: recycledMaterials.map((m) => [m.material, formatNumber(m.quantityKg, 1), m.benefit]),
-    theme: 'grid',
-    styles: { font: FONT, fontSize: 8.5, textColor: BLACK, cellPadding: 2, lineColor: BLACK, lineWidth: 0.15 },
-    headStyles: { fillColor: false, textColor: BLACK, fontStyle: 'bold' },
-    columnStyles: { 1: { halign: 'right' } },
-    didDrawPage: () => {
-      drawLetterhead(doc, pageAssets)
-    },
+    body: recycledMaterials.map((m) => [m.material, n1(m.quantityKg), m.benefit]),
+    styles: { fontSize: 8, cellPadding: 1.4 },
+    columnStyles: { 0: { cellWidth: 36 }, 1: { halign: 'center', cellWidth: 28 } },
+    rowPageBreak: 'avoid',
   })
-  y = doc.lastAutoTable.finalY + 3
-  y = paragraph(doc, y, T.table2Caption, { size: 7.5, color: BRAND.muted })
+  textBlock(flow, 'caption', T.table2Caption, { size: 8, align: 'center' })
 
-  // 4. Methodology
-  y = heading(doc, y, T.h4)
+  // 4. Methodology — "4.1 Data Collection:" in bold, running into its text.
+  heading(flow, T.h4)
   METHODOLOGY_SECTIONS.forEach((_, i) => {
-    y = subheading(doc, y, T[`m${i}Heading`])
-    y = paragraph(doc, y, T[`m${i}Body`])
+    const head = T[`m${i}Heading`]
+    const text = T[`m${i}Body`]
+    const combined = [head && `**${head}**`, text].filter(Boolean).join(' ')
+    textBlock(flow, 'para', combined, { x: X_HEAD_TEXT })
   })
 
   // 5. Environmental Impact
-  y = heading(doc, y, T.h5)
-  y = paragraph(doc, y, T.p5)
-  y = subheading(doc, y, T.h51)
-  for (let i = 0; i < 3; i++) y = bullet(doc, y, T[`b51_${i}`])
-  y = subheading(doc, y, T.h52)
-  for (let i = 0; i < 2; i++) y = bullet(doc, y, T[`b52_${i}`])
-  y = subheading(doc, y, T.h53)
-  for (let i = 0; i < 2; i++) y = bullet(doc, y, T[`b53_${i}`])
-  y = subheading(doc, y, T.h54)
-  for (let i = 0; i < 2; i++) y = bullet(doc, y, T[`b54_${i}`])
-  y += 2
+  heading(flow, T.h5)
+  textBlock(flow, 'para5', T.p5, { x: X_HEAD })
+  const groups = [
+    ['h51', 'b51_', 3],
+    ['h52', 'b52_', 2],
+    ['h53', 'b53_', 2],
+    ['h54', 'b54_', 2],
+  ]
+  for (const [h, prefix, count] of groups) {
+    subheading(flow, T[h])
+    for (let i = 0; i < count; i++) bullet(flow, T[`${prefix}${i}`])
+  }
 
   // 6. Conclusion
-  y = heading(doc, y, T.h6)
-  CONCLUSION_PARAGRAPHS.forEach((_, i) => (y = paragraph(doc, y, T[`concl${i}`])))
+  heading(flow, T.h6)
+  CONCLUSION_PARAGRAPHS.forEach((_, i) => textBlock(flow, i === 0 ? 'concl' : 'para', T[`concl${i}`]))
 
-  // Sign-off, with role labels above each name (Prepared by: / Reviewed by: / Approved by:)
-  y = ensureSpace(doc, y, 30)
-  y += 6
-  const colWidth = (pageWidth - MARGIN * 2) / SIGNATORIES.length
-  const showSignatures = !data.textOverrides?.hideSignatures
-  SIGNATORIES.forEach((sig, i) => {
-    const x = MARGIN + colWidth * i
-    doc.setTextColor(...BLACK)
-    doc.setFont(FONT, 'normal')
-    doc.setFontSize(9)
-    doc.text(T[`role${i}`], x, y)
+  drawSignOff(flow, assets, T, !data.textOverrides?.hideSignatures)
 
-    doc.setDrawColor(...BRAND.border)
-    doc.setLineWidth(0.2)
-    doc.line(x, y + 14, x + colWidth - 10, y + 14)
-    // A person's pen signature only goes above their OWN name (not if the name was edited).
-    if (showSignatures && sig.signature && T[`sig${i}Name`] === sig.name) drawSignature(doc, assets, sig.signature, x + (colWidth - 10) / 2, y + 14)
-    doc.setTextColor(...BLACK)
-    doc.setFont(FONT, 'bold')
-    doc.setFontSize(9.5)
-    drawText(doc, T[`sig${i}Name`], x, y + 19)
-    doc.setTextColor(...BRAND.muted)
-    doc.setFont(FONT, 'normal')
-    doc.setFontSize(7.5)
-    if (T[`sig${i}Title`]) doc.text(doc.splitTextToSize(T[`sig${i}Title`], colWidth - 10), x, y + 23)
-  })
-  y += 34
-
-  // Real form-code footer image + real two-row compliance strip, both extracted from the reference PDF.
-  // A removed form code / logo leaves the layout below it as-is.
-  y = ensureSpace(doc, y, 40)
-  if (assets?.formCode) {
-    const dim = REPORT_ASSET_DIMENSIONS.formCode
-    const w = 28
-    const h = w * (dim.height / dim.width)
-    if (!hidden.has(FORM_CODE_ID)) {
-      doc.addImage(assets.formCode, 'PNG', MARGIN, y, w, h)
-      builtInBoxes.push({ id: FORM_CODE_ID, name: 'Form code', page: currentPage(doc), x: MARGIN, y, w, h, movable: true })
-    }
-    y += h + 3
-  }
-  if (assets?.complianceStrip) {
-    const dim = REPORT_ASSET_DIMENSIONS.complianceStrip
-    const stripW = pageWidth - MARGIN * 2
-    const stripH = stripW * (dim.height / dim.width)
-    y = ensureSpace(doc, y, stripH)
-    const logoBoxes = reportStripLogoBoxes(hidden, { x: MARGIN, y, w: stripW })
-    if (!REPORT_COMPLIANCE_LOGOS.some((l) => hidden.has(l.id))) {
-      doc.addImage(assets.complianceStrip, 'PNG', MARGIN, y, stripW, stripH)
-    } else {
-      // Some logos removed: draw the rest one by one, closed up and centered per row.
-      for (const box of logoBoxes) {
-        const piece = assets.complianceStripPieces?.[box.id]
-        if (piece) doc.addImage(piece, 'PNG', box.x, box.y, box.w, box.h, box.id, 'FAST')
-      }
-    }
-    for (const box of logoBoxes) builtInBoxes.push({ id: box.id, name: box.name, page: currentPage(doc), x: box.x, y: box.y, w: box.w, h: box.h, movable: true })
+  // Header + footer on every page (drawn last, over nothing — the body stays between them).
+  const pageCount = doc.getNumberOfPages()
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p)
+    drawHeader(doc, assets, T, p - 1)
+    drawFooter(doc, assets, T, p - 1)
   }
 
   drawPlacedImages(doc, data.placedImages)
-  return { pageCount: doc.getNumberOfPages(), builtInBoxes }
+  return { pageCount, builtInBoxes }
 }
 
 /**

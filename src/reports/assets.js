@@ -1,14 +1,14 @@
-// Real EnviroCycle report assets, extracted directly from the reference
-// "Carbon Abatement - Client Template.pdf"'s embedded images (soft masks
-// merged the same way as the certificate assets — see
-// certificate/assets.js). These are pre-composed images from the source
-// PDF itself (letterhead with logo+contact info, the teal-to-blue gradient
-// bar, the two-row compliance-logo strip, and the form-code footer text) —
-// not redrawn, so they match the reference exactly.
+// EnviroCycle report assets. The teal-to-blue top bar and the two-row
+// compliance-logo strip are the reference "Carbon Abatement - Client
+// Template.pdf"'s own embedded images (soft masks merged the same way as the
+// certificate assets — see certificate/assets.js). The letterhead logo is the
+// high-resolution EnviroCycle logo with its lettering recoloured dark for a
+// white page (the reference's own letterhead picture is only ~96 dpi, which
+// is what made the header blurry); the letterhead's text lines and the form
+// code are drawn as real text by reportPdfTemplate.js.
 
-import letterheadUrl from '../assets/report/letterhead.png'
+import logoDarkUrl from '../assets/report/logo-dark.png'
 import complianceStripUrl from '../assets/report/compliance-strip.png'
-import formCodeUrl from '../assets/report/form-code.png'
 import gradientBarUrl from '../assets/report/gradient-bar.png'
 // Same pen signatures as the certificate, for the sign-off lines.
 import sigSanchezUrl from '../assets/certificate/sig-sanchez.png'
@@ -68,15 +68,14 @@ function cropStripPieces(stripDataUrl) {
 
 /** Load (and cache) every report brand asset as a data URL. */
 export async function loadReportAssets() {
-  const [letterhead, complianceStrip, formCode, gradientBar, sigSanchez, sigLaconsay, sigBweheni] = await Promise.all([
-    loadAsDataUrl(letterheadUrl),
+  const [logoDark, complianceStrip, gradientBar, sigSanchez, sigLaconsay, sigBweheni] = await Promise.all([
+    loadAsDataUrl(logoDarkUrl),
     loadAsDataUrl(complianceStripUrl),
-    loadAsDataUrl(formCodeUrl),
     loadAsDataUrl(gradientBarUrl),
     loadAsDataUrl(sigSanchezUrl),
     loadAsDataUrl(sigLaconsayUrl),
     loadAsDataUrl(sigBweheniUrl),
   ])
   const complianceStripPieces = await cropStripPieces(complianceStrip)
-  return { letterhead, complianceStrip, complianceStripPieces, formCode, gradientBar, sigSanchez, sigLaconsay, sigBweheni }
+  return { logoDark, complianceStrip, complianceStripPieces, gradientBar, sigSanchez, sigLaconsay, sigBweheni }
 }

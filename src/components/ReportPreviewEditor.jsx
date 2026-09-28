@@ -5,9 +5,8 @@ import { ImagesSection, BuiltInSection, TextFieldsSection } from './editor/Edito
 import { withText, withoutKey, withSignatures, withHiddenImages, hiddenImageSet, countEdits } from './editor/overrides.js'
 import { placedImagesFromFiles } from './editor/placeImages.js'
 import { generateReportPdf } from '../reports/generateReportPdf.js'
-import { loadReportAssets } from '../reports/assets.js'
 import { reportTextFields } from '../reports/reportText.js'
-import { LETTERHEAD_ID, GRADIENT_BAR_ID, FORM_CODE_ID, REPORT_COMPLIANCE_LOGOS } from '../reports/reportBuiltInImages.js'
+import { LETTERHEAD_ID, GRADIENT_BAR_ID, REPORT_COMPLIANCE_LOGOS } from '../reports/reportBuiltInImages.js'
 import { renderPdfPagesToImages } from '../lib/renderPdfPage.js'
 
 // The report is A4 portrait, in mm (jsPDF's unit in generateReportPdf.js).
@@ -76,16 +75,6 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
     if (images.some((img) => restoring.has(img.sourceId))) onImagesChange(images.filter((img) => !restoring.has(img.sourceId)))
   }
 
-  /** Make the form code or a compliance logo movable: hide it and re-add it as a placed image at the same spot. */
-  async function editBuiltInImage(box) {
-    const assets = await loadReportAssets()
-    const dataUrl = box.id === FORM_CODE_ID ? assets.formCode : assets.complianceStripPieces[box.id]
-    if (!dataUrl) return
-    const id = `builtin-${box.id}-${Date.now()}`
-    onImagesChange([...images, { id, name: box.name, dataUrl, page: box.page, x: box.x, y: box.y, w: box.w, h: box.h, sourceId: box.id }])
-    onOverridesChange(withHiddenImages(overrides, [box.id], true))
-    setSelectedImageId(id)
-  }
 
   async function addImageFiles(files, at, page = 0) {
     const { added, error } = await placedImagesFromFiles(files, { at, page, pageW: PAGE_W_MM, pageH: PAGE_H_MM })
@@ -141,7 +130,7 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
                   editing={editing}
                   builtInBoxes={layout.builtInBoxes.filter((b) => b.page === page)}
                   onHideBuiltIn={(id) => onOverridesChange(withHiddenImages(overrides, [id], true))}
-                  onEditBuiltIn={editBuiltInImage}
+                  onEditBuiltIn={() => {}}
                   images={images.filter((img) => pageOf(img) === page)}
                   onImagesChange={(pageImages) => setPageImages(page, pageImages)}
                   selectedImageId={selectedImageId}
@@ -169,7 +158,6 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
               toggles={[
                 { id: LETTERHEAD_ID, label: 'Letterhead (every page)' },
                 { id: GRADIENT_BAR_ID, label: 'Top colour bar (every page)' },
-                { id: FORM_CODE_ID, label: 'Form code' },
               ]}
               logos={REPORT_COMPLIANCE_LOGOS}
               hidden={hidden}

@@ -5,6 +5,7 @@
 import { jsPDF } from 'jspdf'
 import { drawReportPdf } from './reportPdfTemplate.js'
 import { loadReportAssets } from './assets.js'
+import { loadReportFonts, registerReportFonts } from './fonts.js'
 import { formalizeForFilename, formalFilename } from '../lib/download.js'
 
 /**
@@ -12,9 +13,10 @@ import { formalizeForFilename, formalFilename } from '../lib/download.js'
  * @returns {Promise<{ blob: Blob, filename: string, layout: { pageCount: number, builtInBoxes: object[] } }>}
  */
 export async function generateReportPdf(data) {
-  const assets = await loadReportAssets()
+  const [assets, fonts] = await Promise.all([loadReportAssets(), loadReportFonts()])
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  registerReportFonts(doc, fonts)
   const layout = drawReportPdf(doc, assets, data)
 
   // Formal filename, e.g. "Carbon Abatement Report - Acme Corporation - February 2, 2026.pdf"
