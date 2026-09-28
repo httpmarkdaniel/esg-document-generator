@@ -13,6 +13,8 @@ import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, kgString, todayIso } from '../lib/format.js'
 import { combineRrSummaries } from '../rrData/rrClient.js'
 import { RrMultiPicker } from './RrMultiPicker.jsx'
+import { CertificatePreviewEditor } from './CertificatePreviewEditor.jsx'
+import { withoutDataOverrides } from '../certificate/certificateText.js'
 
 export const CertificateGenerator = forwardRef(function CertificateGenerator(
   { prefillCalculation, onPrefillConsumed, onRrsSelected, hideActions = false },
@@ -24,6 +26,8 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   const [generating, setGenerating] = useState(false)
 
   const [rrSummary, setRrSummary] = useState(null)
+  // Text edits made in the preview editor, key -> text (see certificateText.js).
+  const [textOverrides, setTextOverrides] = useState({})
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — we only carry
@@ -45,6 +49,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
         electronicsKg: String(result.materials.electronics.weightKg),
       },
     }))
+    setTextOverrides(withoutDataOverrides)
     setStatus({ tone: 'success', message: 'Calculation applied from the Impact Calculator.' })
     onPrefillConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,6 +75,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   function handleRrsApply(summaries) {
     const summary = combineRrSummaries(summaries)
     setRrSummary(summary)
+    setTextOverrides(withoutDataOverrides)
     setForm((f) => ({
       ...f,
       recipient: summary.accountName || f.recipient,
@@ -102,6 +108,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
 
   const previewNumber = useMemo(() => generateCertificateNumber(form.certificateType, form), [form])
   const preview = useMemo(() => normalizeCertificateData(form, { certificateNumber: previewNumber }), [form, previewNumber])
+  const certificateData = useMemo(() => ({ ...preview, textOverrides }), [preview, textOverrides])
 
   /** Validate + build the PDF. Returns { ok:true, blob, filename } or { ok:false }. Never auto-downloads. */
   async function buildCertificate() {
@@ -112,7 +119,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
       return { ok: false }
     }
     try {
-      const data = normalizeCertificateData(form, { certificateNumber: previewNumber })
+      const data = { ...normalizeCertificateData(form, { certificateNumber: previewNumber }), textOverrides }
       const { blob, filename } = await generateCertificatePdf(data)
       return { ok: true, blob, filename }
     } catch (err) {
@@ -328,16 +335,13 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
           <CertificatePreviewTiles type={type} preview={preview} />
         </Card>
 
-        <Card title={`Preview ${CERTIFICATE_TYPE_LIST.find((t) => t.id === type)?.label ?? 'Certificate'}`}>
-          <div className="space-y-1.5 text-sm">
-            <Row label="Certificate No." value={previewNumber} />
-            <Row label="Recipient" value={form.recipient} />
-            <Row label="Reporting Period" value={preview.reportingPeriodLabel} />
-          </div>
-        </Card>
+      </div>
 
+      <CertificatePreviewEditor data={certificateData} overrides={textOverrides} onOverridesChange={setTextOverrides} />
+
+      <div className="grid gap-5 lg:grid-cols-2">
         {!hideActions && (
-          <Card>
+          <Card className="lg:col-start-2">
             <div className="flex flex-col gap-3">
               {status && <Banner tone={status.tone}>{status.message}</Banner>}
               <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
@@ -347,7 +351,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
           </Card>
         )}
         {hideActions && status && (
-          <Card>
+          <Card className="lg:col-start-2">
             <Banner tone={status.tone}>{status.message}</Banner>
           </Card>
         )}
@@ -400,15 +404,6 @@ function CertificatePreviewTiles({ type, preview }) {
           <div className="mt-0.5 text-lg font-semibold text-brand-green-dark">{value}</div>
         </div>
       ))}
-    </div>
-  )
-}
-
-function Row({ label, value }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-gray-50 py-1 last:border-0">
-      <span className="text-xs uppercase tracking-wide text-gray-400">{label}</span>
-      <span className="truncate text-right font-medium text-gray-800">{value || '—'}</span>
     </div>
   )
 }

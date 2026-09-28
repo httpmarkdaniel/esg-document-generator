@@ -10,8 +10,8 @@
 // file does.
 
 import autoTable from 'jspdf-autotable'
-import { formatKg, formatNumber, toText } from '../lib/format.js'
-import { COMPANY, BRAND, SIGNATORIES, CERTIFICATE_TYPES, CERTIFICATE_DISCLAIMER, MATERIAL_BENEFIT_TEXT } from '../lib/brand.js'
+import { BRAND, SIGNATORIES } from '../lib/brand.js'
+import { resolveCertificateText } from './certificateText.js'
 import { ASSET_DIMENSIONS } from './assetDimensions.js'
 
 const MARGIN = 14
@@ -52,6 +52,12 @@ const LOGO_X = 27.2
 const LOGO_Y = 8.4
 const LOGO_WIDTH = 62.7
 
+/** Draw text unless it's empty (an empty string is how the preview editor hides a line). */
+function drawText(doc, text, x, y, options) {
+  if (text === '' || text == null) return
+  doc.text(text, x, y, options)
+}
+
 function withAlpha(doc, alpha, fn) {
   doc.saveGraphicsState()
   doc.setGState(new doc.GState({ opacity: alpha }))
@@ -77,7 +83,7 @@ function drawHeaderShape(doc, key, color) {
 }
 
 /** Navy/lime diagonal header band shared by all certificate types, matching the reference PDF's exact vector shapes. */
-function drawHeader(doc, assets, { certificateNumber, title }) {
+function drawHeader(doc, assets, T) {
   const pageWidth = doc.internal.pageSize.getWidth()
 
   // Draw order matches the reference PDF's own paint order: lime's shadow,
@@ -93,52 +99,52 @@ function drawHeader(doc, assets, { certificateNumber, title }) {
   doc.setFont('Poppins', 'normal')
   doc.setFontSize(9.5)
   doc.setTextColor(...BRAND.navy)
-  doc.text(`Certificate No. ${toText(certificateNumber)}`, pageWidth - MARGIN, 15, { align: 'right' })
+  drawText(doc, T.certificateNo, pageWidth - MARGIN, 15, { align: 'right' })
 
   let y = HEADER_HEIGHT + 14
   doc.setTextColor(...BRAND.green)
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(24)
-  doc.text(title, pageWidth / 2, y, { align: 'center' })
+  drawText(doc, T.title, pageWidth / 2, y, { align: 'center' })
 
   y += 9
   doc.setTextColor(...BRAND.ink)
   doc.setFont('Poppins', 'normal')
   doc.setFontSize(11)
-  doc.text('IS ISSUED TO :', pageWidth / 2, y, { align: 'center' })
+  drawText(doc, T.issuedTo, pageWidth / 2, y, { align: 'center' })
 
   return y
 }
 
 /** Recipient name / address / reporting-period block, shared by all types. */
-function drawRecipientBlock(doc, data, y) {
+function drawRecipientBlock(doc, T, y) {
   const pageWidth = doc.internal.pageSize.getWidth()
   let cursorY = y + 11
 
   doc.setTextColor(...BRAND.navy)
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(18)
-  doc.text(toText(data.recipient), pageWidth / 2, cursorY, { align: 'center' })
+  drawText(doc, T.recipient, pageWidth / 2, cursorY, { align: 'center' })
 
-  if (toText(data.companyAddress, '') !== '—') {
+  if (T.address) {
     cursorY += 8
     doc.setTextColor(...BRAND.muted)
     doc.setFont('Poppins', 'normal')
     doc.setFontSize(10)
-    doc.text(toText(data.companyAddress), pageWidth / 2, cursorY, { align: 'center' })
+    doc.text(T.address, pageWidth / 2, cursorY, { align: 'center' })
   }
 
   cursorY += 9
   doc.setFont('Poppins', 'italic')
   doc.setFontSize(10)
   doc.setTextColor(...BRAND.ink)
-  doc.text(`Reporting Period: ${data.reportingPeriodLabel}`, pageWidth / 2, cursorY, { align: 'center' })
+  drawText(doc, T.period, pageWidth / 2, cursorY, { align: 'center' })
 
   return cursorY + 8
 }
 
 /** Given-date line, signature row, disclaimer, compliance-logo strip, and bottom accent bar. Shared by all types. */
-function drawFooter(doc, assets, data) {
+function drawFooter(doc, assets, T) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
 
@@ -146,15 +152,15 @@ function drawFooter(doc, assets, data) {
   doc.setTextColor(...BRAND.ink)
   doc.setFont('Poppins', 'normal')
   doc.setFontSize(9.5)
-  doc.text(`Given this day, ${data.givenDateLabel}, at ${COMPANY.name}`, pageWidth / 2, y, { align: 'center' })
+  drawText(doc, T.givenLine, pageWidth / 2, y, { align: 'center' })
   y += 4.5
   doc.setTextColor(...BRAND.muted)
-  doc.text(COMPANY.addressLine, pageWidth / 2, y, { align: 'center' })
+  drawText(doc, T.companyAddress, pageWidth / 2, y, { align: 'center' })
 
   // Signature row
   y = pageHeight - 44
   const colWidth = (pageWidth - MARGIN * 2) / SIGNATORIES.length
-  SIGNATORIES.forEach((sig, i) => {
+  SIGNATORIES.forEach((_, i) => {
     const cx = MARGIN + colWidth * i + colWidth / 2
     doc.setDrawColor(...BRAND.border)
     doc.setLineWidth(0.2)
@@ -162,11 +168,11 @@ function drawFooter(doc, assets, data) {
     doc.setTextColor(...BRAND.navy)
     doc.setFont('Poppins', 'bold')
     doc.setFontSize(10)
-    doc.text(sig.name, cx, y, { align: 'center' })
+    drawText(doc, T[`sig${i}Name`], cx, y, { align: 'center' })
     doc.setTextColor(...BRAND.muted)
     doc.setFont('Poppins', 'normal')
     doc.setFontSize(7.5)
-    doc.text(sig.title, cx, y + 4, { align: 'center' })
+    drawText(doc, T[`sig${i}Title`], cx, y + 4, { align: 'center' })
   })
 
   // Disclaimer
@@ -174,9 +180,7 @@ function drawFooter(doc, assets, data) {
   doc.setTextColor(...BRAND.muted)
   doc.setFont('Poppins', 'normal')
   doc.setFontSize(6.8)
-  const disclaimer = CERTIFICATE_DISCLAIMER[data.certificateType] || CERTIFICATE_DISCLAIMER.EIC
-  const lines = doc.splitTextToSize(disclaimer, pageWidth - MARGIN * 2)
-  doc.text(lines, pageWidth / 2, y, { align: 'center' })
+  if (T.disclaimer) doc.text(doc.splitTextToSize(T.disclaimer, pageWidth - MARGIN * 2), pageWidth / 2, y, { align: 'center' })
 
   // Real compliance-logo strip (ISO/BSI/FDA/UN/etc.), extracted from the
   // reference PDF at its own exact size/position (page.get_image_info()):
@@ -234,13 +238,13 @@ function drawStatTile(doc, assets, x, y, w, label, value, labelLines = 1, iconKe
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(STAT_TILE_LABEL_SIZE)
   doc.setTextColor(...BRAND.ink)
-  doc.text(doc.splitTextToSize(label, textW), textX, y + 2.5)
+  if (label) doc.text(doc.splitTextToSize(label, textW), textX, y + 2.5)
 
   const valueY = y + 2.5 + labelLines * STAT_TILE_LABEL_LINE_HEIGHT + 4
   doc.setTextColor(...BRAND.green)
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(15)
-  doc.text(value, textX, valueY)
+  drawText(doc, value, textX, valueY)
 }
 
 /** Centered label-over-big-number block with no icon — matches the Recycled Plastics Certificate's plain numeric columns. */
@@ -248,12 +252,12 @@ function drawSimpleStatBlock(doc, cx, y, label, value) {
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(9.5)
   doc.setTextColor(...BRAND.ink)
-  doc.text(label, cx, y, { align: 'center' })
+  drawText(doc, label, cx, y, { align: 'center' })
 
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(20)
   doc.setTextColor(...BRAND.green)
-  doc.text(value, cx, y + 9, { align: 'center' })
+  drawText(doc, value, cx, y + 9, { align: 'center' })
 }
 
 /** Bordered panel with a title and a row of stat tiles inside — used by EIC. */
@@ -265,7 +269,7 @@ function drawPanel(doc, assets, x, y, w, h, title, tiles) {
   doc.setTextColor(...BRAND.green)
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(9.5)
-  doc.text(title, x + w / 2, y - 3, { align: 'center' })
+  drawText(doc, title, x + w / 2, y - 3, { align: 'center' })
 
   const tileW = (w - 8) / tiles.length
   const maxLabelLines = Math.max(...tiles.map((t) => statTileLabelLineCount(doc, t.label, tileW - 2)))
@@ -277,9 +281,9 @@ function drawPanel(doc, assets, x, y, w, h, title, tiles) {
 // ---------------------------------------------------------------------------
 // Environmental Impact Certificate (EIC)
 // ---------------------------------------------------------------------------
-function drawEnvironmentalImpactCertificate(doc, assets, data) {
-  let y = drawHeader(doc, assets, { certificateNumber: data.certificateNumber, title: CERTIFICATE_TYPES.EIC.title })
-  y = drawRecipientBlock(doc, data, y)
+function drawEnvironmentalImpactCertificate(doc, assets, T) {
+  let y = drawHeader(doc, assets, T)
+  y = drawRecipientBlock(doc, T, y)
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const panelY = y + 6
@@ -288,46 +292,45 @@ function drawEnvironmentalImpactCertificate(doc, assets, data) {
   const panelW = (pageWidth - MARGIN * 2 - gap) / 2
 
   const resultTiles = [
-    { label: 'Carbon Saved', value: `${formatNumber(data.netCarbonAbatedKgCO2e)}\nkg CO2e`, icon: 'iconCo2' },
-    { label: 'Landfill Diverted', value: `${formatNumber(data.landfillDivertedKg)}\nkg`, icon: 'iconLandfill' },
-    { label: 'Plastic Recycled', value: `${formatNumber(data.plasticRecycledKg)}\nkg`, icon: 'iconRecycle' },
+    { label: T.carbonLabel, value: T.carbonValue, icon: 'iconCo2' },
+    { label: T.landfillLabel, value: T.landfillValue, icon: 'iconLandfill' },
+    { label: T.plasticLabel, value: T.plasticValue, icon: 'iconRecycle' },
   ]
-  drawPanel(doc, assets, MARGIN, panelY, panelW, panelH, 'ENVIRONMENTAL IMPACT RESULTS', resultTiles)
+  drawPanel(doc, assets, MARGIN, panelY, panelW, panelH, T.resultsTitle, resultTiles)
 
+  // A savings tile's text only exists when its value is above zero (see certificateText.js).
   const savingsTiles = [
-    data.treesSaved > 0 && { label: 'Trees Saved', value: `${formatNumber(data.treesSaved, 0)}\nTrees`, icon: 'iconTree' },
-    data.waterSavedLiters > 0 && { label: 'Water Saved', value: `${formatNumber(data.waterSavedLiters, 0)}\nL`, icon: 'iconWater' },
-    data.energySavedKwh > 0 && { label: 'Energy Saved', value: `${formatNumber(data.energySavedKwh)}\nkWh`, icon: 'iconEnergy' },
+    'treesLabel' in T && { label: T.treesLabel, value: T.treesValue, icon: 'iconTree' },
+    'waterLabel' in T && { label: T.waterLabel, value: T.waterValue, icon: 'iconWater' },
+    'energyLabel' in T && { label: T.energyLabel, value: T.energyValue, icon: 'iconEnergy' },
   ].filter(Boolean)
   if (savingsTiles.length) {
-    drawPanel(doc, assets, MARGIN + panelW + gap, panelY, panelW, panelH, 'ENVIRONMENTAL SAVINGS', savingsTiles)
+    drawPanel(doc, assets, MARGIN + panelW + gap, panelY, panelW, panelH, T.savingsTitle, savingsTiles)
   }
 
-  drawFooter(doc, assets, data)
+  drawFooter(doc, assets, T)
 }
 
 // ---------------------------------------------------------------------------
 // Carbon Abatement Certificate (CAC)
 // ---------------------------------------------------------------------------
-function drawCarbonAbatementCertificate(doc, assets, data) {
-  let y = drawHeader(doc, assets, { certificateNumber: data.certificateNumber, title: CERTIFICATE_TYPES.CAC.title })
-  y = drawRecipientBlock(doc, data, y)
+function drawCarbonAbatementCertificate(doc, assets, T) {
+  let y = drawHeader(doc, assets, T)
+  y = drawRecipientBlock(doc, T, y)
 
   doc.setTextColor(...BRAND.muted)
   doc.setFont('Poppins', 'italic')
   doc.setFontSize(8.5)
-  doc.text('Basis: Net carbon abated = avoided virgin production emissions - recycled processing emissions', doc.internal.pageSize.getWidth() / 2, y, {
-    align: 'center',
-  })
+  drawText(doc, T.basis, doc.internal.pageSize.getWidth() / 2, y, { align: 'center' })
   y += 8
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const tiles = [
-    { label: 'Materials Collected', value: `${formatNumber(data.materialsCollectedKg)}\nKG`, icon: 'iconRecycle' },
-    { label: 'Total Carbon Footprint', value: `${formatNumber(data.totalCarbonFootprintKgCO2e)}\nkg CO2e`, icon: 'iconFootprint' },
-    { label: 'Net Carbon Abated', value: `${formatNumber(data.netCarbonAbatedKgCO2e / 1000)}\ntCO2e`, icon: 'iconCo2' },
-    { label: 'Recycled Emissions', value: `${formatNumber(data.recycledEmissionsKgCO2e)}\nkg CO2e`, icon: 'iconCloud' },
-    { label: 'Carbon Benefits Equivalent', value: `~${formatNumber(data.kmAvoided, 0)} km\navoided`, icon: 'iconCar' },
+    { label: T.collectedLabel, value: T.collectedValue, icon: 'iconRecycle' },
+    { label: T.footprintLabel, value: T.footprintValue, icon: 'iconFootprint' },
+    { label: T.abatedLabel, value: T.abatedValue, icon: 'iconCo2' },
+    { label: T.recycledEmissionsLabel, value: T.recycledEmissionsValue, icon: 'iconCloud' },
+    { label: T.kmLabel, value: T.kmValue, icon: 'iconCar' },
   ]
   const cols = 3
   const tileW = (pageWidth - MARGIN * 2) / cols
@@ -338,15 +341,15 @@ function drawCarbonAbatementCertificate(doc, assets, data) {
     drawStatTile(doc, assets, MARGIN + tileW * col, y + row * 20, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon)
   })
 
-  drawFooter(doc, assets, data)
+  drawFooter(doc, assets, T)
 }
 
 // ---------------------------------------------------------------------------
 // Landfill Diverted Certificate (LDC)
 // ---------------------------------------------------------------------------
-function drawLandfillDivertedCertificate(doc, assets, data) {
-  let y = drawHeader(doc, assets, { certificateNumber: data.certificateNumber, title: CERTIFICATE_TYPES.LDC.title })
-  y = drawRecipientBlock(doc, data, y)
+function drawLandfillDivertedCertificate(doc, assets, T) {
+  let y = drawHeader(doc, assets, T)
+  y = drawRecipientBlock(doc, T, y)
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const leftW = (pageWidth - MARGIN * 2) * 0.4
@@ -355,22 +358,17 @@ function drawLandfillDivertedCertificate(doc, assets, data) {
   doc.setTextColor(...BRAND.green)
   doc.setFont('Poppins', 'bold')
   doc.setFontSize(9.5)
-  doc.text('MATERIAL DIVERSION SUMMARY', MARGIN, y)
-  doc.text('RECYCLED MATERIALS SUMMARY', rightX, y)
+  drawText(doc, T.diversionHeading, MARGIN, y)
+  drawText(doc, T.recycledHeading, rightX, y)
   y += 6
 
-  drawStatTile(doc, assets, MARGIN, y, leftW, 'Materials Collected', `${formatNumber(data.materialsCollectedKg)} KG`, 1, 'iconRecycle')
-  drawStatTile(doc, assets, MARGIN, y + 16, leftW, 'Landfill Diverted', `${formatNumber(data.landfillDivertedKg)} KG`, 1, 'iconLandfill')
+  drawStatTile(doc, assets, MARGIN, y, leftW, T.collectedLabel, T.collectedValue, 1, 'iconRecycle')
+  drawStatTile(doc, assets, MARGIN, y + 16, leftW, T.landfillLabel, T.landfillValue, 1, 'iconLandfill')
 
+  // Rows only exist for materials with weight (see certificateText.js).
   const rows = ['Metal', 'Plastic', 'Glass', 'Electronics']
-    .map((label) => {
-      const key = `${label.toLowerCase()}Kg`
-      const weight = data.materials[key]
-      if (weight <= 0) return null
-      const pct = data.materialsTotalKg > 0 ? (weight / data.materialsTotalKg) * 100 : 0
-      return [label, `${formatKg(weight)} (${formatNumber(pct, 1)}%)`, MATERIAL_BENEFIT_TEXT[label]]
-    })
-    .filter(Boolean)
+    .filter((m) => `row${m}Label` in T)
+    .map((m) => [T[`row${m}Label`], T[`row${m}Amount`], T[`row${m}Benefit`]])
 
   if (rows.length) {
     autoTable(doc, {
@@ -384,29 +382,29 @@ function drawLandfillDivertedCertificate(doc, assets, data) {
     })
   }
 
-  drawFooter(doc, assets, data)
+  drawFooter(doc, assets, T)
 }
 
 // ---------------------------------------------------------------------------
 // Recycled Plastics Certificate (RPC)
 // ---------------------------------------------------------------------------
-function drawRecycledPlasticsCertificate(doc, assets, data) {
-  let y = drawHeader(doc, assets, { certificateNumber: data.certificateNumber, title: CERTIFICATE_TYPES.RPC.title })
-  y = drawRecipientBlock(doc, data, y)
+function drawRecycledPlasticsCertificate(doc, assets, T) {
+  let y = drawHeader(doc, assets, T)
+  y = drawRecipientBlock(doc, T, y)
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const blocks = [
-    { label: 'TOTAL RECEIVED VOLUME', value: `${formatNumber(data.totalReceivedVolumeKg)}\nKG` },
-    { label: 'PLASTIC WASTE', value: `${formatNumber(data.plasticWasteKg)}\nKG` },
-    { label: 'RIGID PLASTIC', value: `${formatNumber(data.rigidPlasticKg)}\nKG` },
-    { label: 'FLEXIBLE PLASTIC', value: `${formatNumber(data.flexiblePlasticKg)}\nKG` },
+    { label: T.receivedLabel, value: T.receivedValue },
+    { label: T.plasticWasteLabel, value: T.plasticWasteValue },
+    { label: T.rigidLabel, value: T.rigidValue },
+    { label: T.flexibleLabel, value: T.flexibleValue },
   ]
   const blockW = (pageWidth - MARGIN * 2) / blocks.length
   blocks.forEach((block, i) => {
     drawSimpleStatBlock(doc, MARGIN + blockW * i + blockW / 2, y + 12, block.label, block.value)
   })
 
-  drawFooter(doc, assets, data)
+  drawFooter(doc, assets, T)
 }
 
 const DRAWERS = {
@@ -419,9 +417,10 @@ const DRAWERS = {
 /**
  * Entry point used by generateCertificatePdf.js. Dispatches by
  * data.certificateType. `assets` is the object returned by
- * loadCertificateAssets() in assets.js.
+ * loadCertificateAssets() in assets.js. Every printed string comes from
+ * resolveCertificateText (defaults + any preview-editor overrides).
  */
 export function drawCertificate(doc, assets, data) {
   const drawer = DRAWERS[data.certificateType] || DRAWERS.EIC
-  drawer(doc, assets, data)
+  drawer(doc, assets, resolveCertificateText(data))
 }
