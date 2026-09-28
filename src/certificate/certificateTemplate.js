@@ -443,4 +443,14 @@ const DRAWERS = {
 export function drawCertificate(doc, assets, data) {
   const drawer = DRAWERS[data.certificateType] || DRAWERS.EIC
   drawer(doc, assets, resolveCertificateText(data), { showSignatures: !data.textOverrides?.hideSignatures })
+  drawPlacedImages(doc, data.placedImages)
+}
+
+/**
+ * Images added in the preview editor (e.g. a client logo), drawn last so
+ * they sit on top. Each is a PNG data URL with its position/size in mm on
+ * the A4-landscape page — see CertificatePreviewEditor.jsx.
+ */
+function drawPlacedImages(doc, images = []) {
+  for (const img of images) doc.addImage(img.dataUrl, 'PNG', img.x, img.y, img.w, img.h, img.id, 'FAST')
 }

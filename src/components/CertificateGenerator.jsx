@@ -28,6 +28,8 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   const [rrSummary, setRrSummary] = useState(null)
   // Text edits made in the preview editor, key -> text (see certificateText.js).
   const [textOverrides, setTextOverrides] = useState({})
+  // Images added in the preview editor (e.g. a client logo): { id, name, dataUrl, x, y, w, h } in mm.
+  const [placedImages, setPlacedImages] = useState([])
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — we only carry
@@ -119,7 +121,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
       return { ok: false }
     }
     try {
-      const data = { ...normalizeCertificateData(form, { certificateNumber: previewNumber }), textOverrides }
+      const data = { ...normalizeCertificateData(form, { certificateNumber: previewNumber }), textOverrides, placedImages }
       const { blob, filename } = await generateCertificatePdf(data)
       return { ok: true, blob, filename }
     } catch (err) {
@@ -342,6 +344,8 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
         data={certificateData}
         overrides={textOverrides}
         onOverridesChange={setTextOverrides}
+        images={placedImages}
+        onImagesChange={setPlacedImages}
         actions={
           (status || !hideActions) && (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
