@@ -1,23 +1,23 @@
 import { useEffect, useRef } from 'react'
-import { PAGE_W_MM, PAGE_H_MM } from '../certificate/page.js'
 
 const MIN_WIDTH_MM = 5
 
 /**
- * Editable images sitting over the certificate preview. Positions/sizes are
- * in mm on the A4-landscape page, so the layer maps them to percentages of
- * its own box, which is exactly the rendered page. Drag a box to move it, drag
- * its corner handle to resize (aspect ratio kept), Delete/Backspace or ✕ to
- * remove.
+ * Editable images sitting over one rendered page of a preview. Positions/sizes
+ * are in mm on a `pageW × pageH` page, so the layer maps them to percentages
+ * of its own box, which is exactly the rendered page. Drag a box to move it,
+ * drag its corner handle to resize (aspect ratio kept), Delete/Backspace or ✕
+ * to remove.
  */
-export function PlacedImagesLayer({ images, onChange, selectedId, onSelect }) {
+export function PlacedImagesLayer({ images, onChange, selectedId, onSelect, pageW, pageH }) {
   const layerRef = useRef(null)
   const dragRef = useRef(null)
 
   // Delete / Backspace removes the selected image (but not while typing in a field).
   useEffect(() => {
     function onKey(e) {
-      if (!selectedId || (e.key !== 'Delete' && e.key !== 'Backspace')) return
+      // Several pages can each have a layer — only the one holding the selected image acts.
+      if (!selectedId || !images.some((img) => img.id === selectedId) || (e.key !== 'Delete' && e.key !== 'Backspace')) return
       if (e.target.closest?.('input, textarea, [contenteditable]')) return
       e.preventDefault()
       onChange(images.filter((img) => img.id !== selectedId))
@@ -28,7 +28,7 @@ export function PlacedImagesLayer({ images, onChange, selectedId, onSelect }) {
   }, [images, onChange, selectedId, onSelect])
 
   function mmPerPx() {
-    return PAGE_W_MM / layerRef.current.getBoundingClientRect().width
+    return pageW / layerRef.current.getBoundingClientRect().width
   }
 
   function startDrag(e, img, mode) {
@@ -48,12 +48,12 @@ export function PlacedImagesLayer({ images, onChange, selectedId, onSelect }) {
     let next
     if (drag.mode === 'move') {
       next = {
-        x: clamp(orig.x + dx, -orig.w / 2, PAGE_W_MM - orig.w / 2),
-        y: clamp(orig.y + dy, -orig.h / 2, PAGE_H_MM - orig.h / 2),
+        x: clamp(orig.x + dx, -orig.w / 2, pageW - orig.w / 2),
+        y: clamp(orig.y + dy, -orig.h / 2, pageH - orig.h / 2),
       }
     } else {
       const aspect = orig.h / orig.w
-      const w = clamp(orig.w + dx, MIN_WIDTH_MM, PAGE_W_MM)
+      const w = clamp(orig.w + dx, MIN_WIDTH_MM, pageW)
       next = { w, h: w * aspect }
     }
     onChange(images.map((img) => (img.id === drag.id ? { ...img, ...next } : img)))
@@ -77,10 +77,10 @@ export function PlacedImagesLayer({ images, onChange, selectedId, onSelect }) {
             onPointerCancel={endDrag}
             className={`pointer-events-auto absolute cursor-move touch-none select-none ${selected ? 'outline outline-2 outline-brand-green' : 'outline outline-1 outline-dashed outline-brand-green/50 hover:outline-brand-green'}`}
             style={{
-              left: `${(img.x / PAGE_W_MM) * 100}%`,
-              top: `${(img.y / PAGE_H_MM) * 100}%`,
-              width: `${(img.w / PAGE_W_MM) * 100}%`,
-              height: `${(img.h / PAGE_H_MM) * 100}%`,
+              left: `${(img.x / pageW) * 100}%`,
+              top: `${(img.y / pageH) * 100}%`,
+              width: `${(img.w / pageW) * 100}%`,
+              height: `${(img.h / pageH) * 100}%`,
             }}
             title={`${img.name} — drag to move, drag the corner to resize`}
           >

@@ -11,20 +11,21 @@
 // the certificates' rounded sans-serif/green branding, matching the
 // reference.
 //
+// Every free-text line comes from resolveReportText (defaults + preview
+// editor overrides); built-in images the editor removed are skipped, and
+// images added in the editor are drawn on top at the end.
+//
 // This is intentionally the only file that knows how the PDF report is
 // laid out. `generateReportPdf.js` just calls `drawReportPdf(doc, assets, data)`.
 
 import autoTable from 'jspdf-autotable'
-import { formatKg, formatUnit, formatNumber, toText } from '../lib/format.js'
-import { COMPANY, BRAND, SIGNATORIES } from '../lib/brand.js'
+import { formatNumber } from '../lib/format.js'
+import { BRAND, SIGNATORIES } from '../lib/brand.js'
 import { REPORT_ASSET_DIMENSIONS } from './assetDimensions.js'
-import {
-  introductionParagraphs,
-  REFURBISH_REUSE_DESCRIPTION,
-  RECYCLED_MATERIALS_DESCRIPTION,
-  METHODOLOGY_SECTIONS,
-  CONCLUSION_PARAGRAPHS,
-} from './methodology.js'
+import { ASSET_DIMENSIONS } from '../certificate/assetDimensions.js'
+import { introductionParagraphs, METHODOLOGY_SECTIONS, CONCLUSION_PARAGRAPHS } from './methodology.js'
+import { resolveReportText } from './reportText.js'
+import { LETTERHEAD_ID, GRADIENT_BAR_ID, FORM_CODE_ID, REPORT_COMPLIANCE_LOGOS, reportStripLogoBoxes } from './reportBuiltInImages.js'
 
 const MARGIN = 18
 const FONT = 'times'
@@ -36,6 +37,13 @@ const BLACK = [15, 15, 15]
 // (partially transparent) letterhead PNG and make it look ghosted/faded.
 let lastLetterheadPage = -1
 let pageAssets = null
+// Built-in images removed in the preview editor, and the page boxes of the
+// built-in images actually drawn (returned to the editor so it can put
+// remove/move targets exactly on them). Reset per document in drawReportPdf.
+let hidden = new Set()
+let builtInBoxes = []
+
+const currentPage = (doc) => doc.internal.getCurrentPageInfo().pageNumber - 1
 
 const LETTERHEAD_WIDTH = 90
 const GRADIENT_BAR_HEIGHT = 4
@@ -48,15 +56,21 @@ function drawLetterhead(doc, assets) {
   if (pageNumber === lastLetterheadPage) return LETTERHEAD_HEIGHT
   lastLetterheadPage = pageNumber
 
-  if (assets?.gradientBar) {
+  // A removed letterhead / bar keeps its space, so the page layout doesn't shift.
+  if (assets?.gradientBar && !hidden.has(GRADIENT_BAR_ID)) {
     doc.addImage(assets.gradientBar, 'PNG', 0, 0, pageWidth, GRADIENT_BAR_HEIGHT)
+    builtInBoxes.push({ id: GRADIENT_BAR_ID, name: 'Top colour bar', page: pageNumber - 1, x: 0, y: 0, w: pageWidth, h: GRADIENT_BAR_HEIGHT })
   }
 
   let y = GRADIENT_BAR_HEIGHT + 4
   if (assets?.letterhead) {
     const dim = REPORT_ASSET_DIMENSIONS.letterhead
     const h = LETTERHEAD_WIDTH * (dim.height / dim.width)
-    doc.addImage(assets.letterhead, 'PNG', pageWidth / 2 - LETTERHEAD_WIDTH / 2, y, LETTERHEAD_WIDTH, h)
+    if (!hidden.has(LETTERHEAD_ID)) {
+      const x = pageWidth / 2 - LETTERHEAD_WIDTH / 2
+      doc.addImage(assets.letterhead, 'PNG', x, y, LETTERHEAD_WIDTH, h)
+      builtInBoxes.push({ id: LETTERHEAD_ID, name: 'Letterhead', page: pageNumber - 1, x, y, w: LETTERHEAD_WIDTH, h })
+    }
     y += h
   }
 
@@ -73,7 +87,11 @@ function ensureSpace(doc, y, needed) {
   return y
 }
 
+// heading / subheading / paragraph / bullet print nothing (and take no space)
+// for an empty string — that's how the preview editor removes a line.
+
 function heading(doc, y, text) {
+  if (!text) return y
   y = ensureSpace(doc, y, 14)
   doc.setTextColor(...BLACK)
   doc.setFont(FONT, 'bold')
@@ -83,6 +101,7 @@ function heading(doc, y, text) {
 }
 
 function subheading(doc, y, text) {
+  if (!text) return y
   y = ensureSpace(doc, y, 10)
   doc.setTextColor(...BLACK)
   doc.setFont(FONT, 'bold')
@@ -92,6 +111,7 @@ function subheading(doc, y, text) {
 }
 
 function paragraph(doc, y, text, opts = {}) {
+  if (!text) return y
   const pageWidth = doc.internal.pageSize.getWidth()
   doc.setFont(FONT, opts.bold ? 'bold' : 'normal')
   doc.setFontSize(opts.size || 9.5)
@@ -104,6 +124,7 @@ function paragraph(doc, y, text, opts = {}) {
 
 /** Hollow "o" bullet, matching the reference's sub-bullet style. */
 function bullet(doc, y, text) {
+  if (!text) return y
   const pageWidth = doc.internal.pageSize.getWidth()
   const indent = MARGIN + 6
   doc.setFont(FONT, 'normal')
@@ -116,11 +137,38 @@ function bullet(doc, y, text) {
   return y + lines.length * 4.6 + 1.5
 }
 
+/** Draw text unless it's empty (an empty string is how the preview editor removes a line). */
+function drawText(doc, text, x, y, options) {
+  if (text) doc.text(text, x, y, options)
+}
+
+// E-signatures on the sign-off lines: one shared scale for all 3 images so
+// they keep their real relative sizes (the tallest come out ~10mm), dipping
+// slightly below the line like a pen signature. Same images as the certificate.
+const SIGNATURE_MM_PER_PX = 10 / 249
+const SIGNATURE_LINE_OVERLAP = 0.18
+
+function drawSignature(doc, assets, key, cx, lineY) {
+  const image = assets?.[key]
+  if (!image) return
+  const dim = ASSET_DIMENSIONS[key]
+  const w = dim.width * SIGNATURE_MM_PER_PX
+  const h = dim.height * SIGNATURE_MM_PER_PX
+  doc.addImage(image, 'PNG', cx - w / 2, lineY + h * SIGNATURE_LINE_OVERLAP - h, w, h)
+}
+
+/**
+ * Draws the whole report. Returns the layout the preview editor needs:
+ * { pageCount, builtInBoxes } — where each built-in image landed (mm, per page).
+ */
 export function drawReportPdf(doc, assets, data) {
-  const { report, client, collectionDateRange, reportIssueDateLabel, rows, totals, recycledMaterials, equivalencies } = data
+  const { client, rows, totals, recycledMaterials } = data
+  const T = resolveReportText(data)
   const pageWidth = doc.internal.pageSize.getWidth()
   pageAssets = assets
   lastLetterheadPage = -1 // reset the per-page draw guard for this fresh document
+  hidden = new Set(data.textOverrides?.hiddenImages || [])
+  builtInBoxes = []
 
   let y = drawLetterhead(doc, assets)
 
@@ -128,50 +176,50 @@ export function drawReportPdf(doc, assets, data) {
   doc.setTextColor(...BLACK)
   doc.setFont(FONT, 'bold')
   doc.setFontSize(17)
-  doc.text(toText(report.title, 'Carbon Abatement Report'), pageWidth / 2, y, { align: 'center' })
+  drawText(doc, T.title, pageWidth / 2, y, { align: 'center' })
   y += 12
 
   // Client / Prepared by / Reporting period block
   doc.setFont(FONT, 'bold')
   doc.setFontSize(9.5)
   doc.setTextColor(...BLACK)
-  doc.text('Client:', MARGIN, y)
+  drawText(doc, T.clientLabel, MARGIN, y)
   doc.setFont(FONT, 'normal')
-  doc.text(toText(client.name), MARGIN + 20, y)
+  drawText(doc, T.clientName, MARGIN + 20, y)
   y += 5
   if (client.addressLine1 !== '—') {
-    doc.text(client.addressLine1, MARGIN + 20, y)
+    drawText(doc, T.clientAddress1, MARGIN + 20, y)
     y += 5
   }
   if (client.cityStateZipCountry !== '—') {
-    doc.text(client.cityStateZipCountry, MARGIN + 20, y)
+    drawText(doc, T.clientCity, MARGIN + 20, y)
     y += 5
   }
   y += 1.5
   doc.setFont(FONT, 'bold')
-  doc.text('Prepared by:', MARGIN, y)
+  drawText(doc, T.preparedLabel, MARGIN, y)
   doc.setFont(FONT, 'normal')
-  doc.text(COMPANY.name, MARGIN + 26, y)
+  drawText(doc, T.preparedName, MARGIN + 26, y)
   y += 5
-  doc.text(COMPANY.addressLine, MARGIN + 26, y)
+  drawText(doc, T.preparedAddress, MARGIN + 26, y)
   y += 6.5
   doc.setFont(FONT, 'bold')
-  doc.text('Reporting Period:', MARGIN, y)
+  drawText(doc, T.periodLabel, MARGIN, y)
   y += 5
   doc.setFont(FONT, 'normal')
-  doc.text(`Items collected: ${toText(collectionDateRange, '—')}`, MARGIN, y)
+  drawText(doc, T.itemsCollected, MARGIN, y)
   y += 5
-  doc.text(`Report issued: ${reportIssueDateLabel}`, MARGIN, y)
+  drawText(doc, T.reportIssued, MARGIN, y)
   y += 9
 
   // 1. Introduction
-  y = heading(doc, y, '1. Introduction')
-  for (const p of introductionParagraphs(toText(client.name))) y = paragraph(doc, y, p)
+  y = heading(doc, y, T.h1)
+  introductionParagraphs('').forEach((_, i) => (y = paragraph(doc, y, T[`intro${i}`])))
 
   // 2. Detailed Impact Breakdown
-  y = heading(doc, y, '2. Detailed Impact Breakdown')
-  y = subheading(doc, y, '2.1 Refurbish/Re-use of Materials')
-  y = paragraph(doc, y, REFURBISH_REUSE_DESCRIPTION)
+  y = heading(doc, y, T.h2)
+  y = subheading(doc, y, T.h21)
+  y = paragraph(doc, y, T.p21)
 
   const tableRows = rows.map((r, i) => [
     String(i + 1),
@@ -226,22 +274,16 @@ export function drawReportPdf(doc, assets, data) {
     },
   })
   y = doc.lastAutoTable.finalY + 3
-  y = paragraph(doc, y, 'Table 1. Summary of Detailed Impact Breakdown for Refurbish/Re-use of Materials', { size: 7.5, color: BRAND.muted })
+  y = paragraph(doc, y, T.table1Caption, { size: 7.5, color: BRAND.muted })
 
   // 2.2 Subtotal
-  y = subheading(doc, y, '2.2 Subtotal Impact for Refurbished Equipment')
-  y = bullet(doc, y, `Total Material Processed: ${formatKg(totals.materialsTotalKg)}`)
-  y = bullet(doc, y, `Total Carbon Footprint: ${formatUnit(totals.carbonFootprintKgCO2e, 'kg CO2e')}`)
-  y = bullet(doc, y, `Recycled Emissions: ${formatUnit(totals.recycledEmissionsKgCO2e, 'kg CO2e')}`)
-  y = bullet(doc, y, `Net Carbon Abated: ${formatUnit(totals.netCarbonAbatedKgCO2e, 'kg CO2e')}`)
-  y = bullet(doc, y, `Water Saved: ${formatUnit(totals.waterSavedLiters, 'liters', 0)}`)
-  y = bullet(doc, y, `Energy Saved: ${formatUnit(totals.energySavedKwh, 'kWh')}`)
-  y = bullet(doc, y, `Landfill Averted: ${formatKg(totals.landfillAvertedKg)}`)
+  y = subheading(doc, y, T.h22)
+  for (let i = 0; i < 7; i++) y = bullet(doc, y, T[`b22_${i}`])
   y += 2
 
   // 3. Recycled Materials
-  y = heading(doc, y, '3. Recycled Materials')
-  y = paragraph(doc, y, RECYCLED_MATERIALS_DESCRIPTION)
+  y = heading(doc, y, T.h3)
+  y = paragraph(doc, y, T.p3)
   autoTable(doc, {
     startY: y,
     margin: { left: MARGIN, right: MARGIN, top: LETTERHEAD_HEIGHT + 4 },
@@ -256,80 +298,107 @@ export function drawReportPdf(doc, assets, data) {
     },
   })
   y = doc.lastAutoTable.finalY + 3
-  y = paragraph(doc, y, 'Table 2. Summary of Materials Recovered', { size: 7.5, color: BRAND.muted })
+  y = paragraph(doc, y, T.table2Caption, { size: 7.5, color: BRAND.muted })
 
   // 4. Methodology
-  y = heading(doc, y, '4. Methodology')
-  for (const section of METHODOLOGY_SECTIONS) {
-    y = subheading(doc, y, section.heading)
-    y = paragraph(doc, y, section.body(toText(client.name)))
-  }
+  y = heading(doc, y, T.h4)
+  METHODOLOGY_SECTIONS.forEach((_, i) => {
+    y = subheading(doc, y, T[`m${i}Heading`])
+    y = paragraph(doc, y, T[`m${i}Body`])
+  })
 
   // 5. Environmental Impact
-  y = heading(doc, y, '5. Environmental Impact')
-  y = paragraph(doc, y, 'The recycling of the listed assets will result in the following environmental benefits:')
-  y = subheading(doc, y, '5.1 Carbon Benefits:')
-  y = bullet(doc, y, `${formatUnit(totals.carbonFootprintKgCO2e, 'kg CO2e')} of embodied carbon avoided through recycling.`)
-  y = bullet(
-    doc,
-    y,
-    `After accounting for ${formatUnit(totals.recycledEmissionsKgCO2e, 'CO2e')} of recycling-related emissions, the net carbon abatement achieved is ${formatUnit(totals.netCarbonAbatedKgCO2e, 'kg CO2e')}.`,
-  )
-  y = bullet(doc, y, `Equivalent to eliminating emissions from ${formatNumber(equivalencies.kmAvoided, 0)} km of passenger-car travel.`)
-  y = subheading(doc, y, '5.2 Water Saved:')
-  y = bullet(doc, y, `${formatUnit(totals.waterSavedLiters, 'liters', 0)} of fresh water saved.`)
-  y = bullet(doc, y, `Equivalent to ${formatNumber(equivalencies.olympicPools, 1)} Olympic-sized swimming pools (1 pool ~ 2.5M liters).`)
-  y = subheading(doc, y, '5.3 Energy Saved:')
-  y = bullet(doc, y, `${formatUnit(totals.energySavedKwh, 'kWh')} of energy conserved.`)
-  y = bullet(doc, y, `Equivalent to powering ${formatNumber(equivalencies.householdYears, 1)} average Philippine household-years (~ 9,000 kWh).`)
-  y = subheading(doc, y, '5.4 Waste Diversion:')
-  y = bullet(doc, y, `${formatKg(totals.landfillAvertedKg)} of electronic waste diverted from landfill.`)
-  y = bullet(doc, y, `Equivalent to ${formatNumber(equivalencies.carWeights, 1)} of an average car's weight (~ 3,000 kg).`)
+  y = heading(doc, y, T.h5)
+  y = paragraph(doc, y, T.p5)
+  y = subheading(doc, y, T.h51)
+  for (let i = 0; i < 3; i++) y = bullet(doc, y, T[`b51_${i}`])
+  y = subheading(doc, y, T.h52)
+  for (let i = 0; i < 2; i++) y = bullet(doc, y, T[`b52_${i}`])
+  y = subheading(doc, y, T.h53)
+  for (let i = 0; i < 2; i++) y = bullet(doc, y, T[`b53_${i}`])
+  y = subheading(doc, y, T.h54)
+  for (let i = 0; i < 2; i++) y = bullet(doc, y, T[`b54_${i}`])
   y += 2
 
   // 6. Conclusion
-  y = heading(doc, y, '6. Conclusion')
-  for (const p of CONCLUSION_PARAGRAPHS) y = paragraph(doc, y, p)
+  y = heading(doc, y, T.h6)
+  CONCLUSION_PARAGRAPHS.forEach((_, i) => (y = paragraph(doc, y, T[`concl${i}`])))
 
   // Sign-off, with role labels above each name (Prepared by: / Reviewed by: / Approved by:)
   y = ensureSpace(doc, y, 30)
   y += 6
-  const roleLabels = ['Prepared by:', 'Reviewed by:', 'Approved by:']
   const colWidth = (pageWidth - MARGIN * 2) / SIGNATORIES.length
+  const showSignatures = !data.textOverrides?.hideSignatures
   SIGNATORIES.forEach((sig, i) => {
     const x = MARGIN + colWidth * i
     doc.setTextColor(...BLACK)
     doc.setFont(FONT, 'normal')
     doc.setFontSize(9)
-    doc.text(roleLabels[i] || '', x, y)
+    doc.text(T[`role${i}`], x, y)
 
     doc.setDrawColor(...BRAND.border)
     doc.setLineWidth(0.2)
     doc.line(x, y + 14, x + colWidth - 10, y + 14)
+    // A person's pen signature only goes above their OWN name (not if the name was edited).
+    if (showSignatures && sig.signature && T[`sig${i}Name`] === sig.name) drawSignature(doc, assets, sig.signature, x + (colWidth - 10) / 2, y + 14)
     doc.setTextColor(...BLACK)
     doc.setFont(FONT, 'bold')
     doc.setFontSize(9.5)
-    doc.text(sig.name, x, y + 19)
+    drawText(doc, T[`sig${i}Name`], x, y + 19)
     doc.setTextColor(...BRAND.muted)
     doc.setFont(FONT, 'normal')
     doc.setFontSize(7.5)
-    doc.text(doc.splitTextToSize(sig.title, colWidth - 10), x, y + 23)
+    if (T[`sig${i}Title`]) doc.text(doc.splitTextToSize(T[`sig${i}Title`], colWidth - 10), x, y + 23)
   })
   y += 34
 
   // Real form-code footer image + real two-row compliance strip, both extracted from the reference PDF.
+  // A removed form code / logo leaves the layout below it as-is.
   y = ensureSpace(doc, y, 40)
   if (assets?.formCode) {
     const dim = REPORT_ASSET_DIMENSIONS.formCode
     const w = 28
-    doc.addImage(assets.formCode, 'PNG', MARGIN, y, w, w * (dim.height / dim.width))
-    y += w * (dim.height / dim.width) + 3
+    const h = w * (dim.height / dim.width)
+    if (!hidden.has(FORM_CODE_ID)) {
+      doc.addImage(assets.formCode, 'PNG', MARGIN, y, w, h)
+      builtInBoxes.push({ id: FORM_CODE_ID, name: 'Form code', page: currentPage(doc), x: MARGIN, y, w, h, movable: true })
+    }
+    y += h + 3
   }
   if (assets?.complianceStrip) {
     const dim = REPORT_ASSET_DIMENSIONS.complianceStrip
     const stripW = pageWidth - MARGIN * 2
     const stripH = stripW * (dim.height / dim.width)
     y = ensureSpace(doc, y, stripH)
-    doc.addImage(assets.complianceStrip, 'PNG', MARGIN, y, stripW, stripH)
+    const logoBoxes = reportStripLogoBoxes(hidden, { x: MARGIN, y, w: stripW })
+    if (!REPORT_COMPLIANCE_LOGOS.some((l) => hidden.has(l.id))) {
+      doc.addImage(assets.complianceStrip, 'PNG', MARGIN, y, stripW, stripH)
+    } else {
+      // Some logos removed: draw the rest one by one, closed up and centered per row.
+      for (const box of logoBoxes) {
+        const piece = assets.complianceStripPieces?.[box.id]
+        if (piece) doc.addImage(piece, 'PNG', box.x, box.y, box.w, box.h, box.id, 'FAST')
+      }
+    }
+    for (const box of logoBoxes) builtInBoxes.push({ id: box.id, name: box.name, page: currentPage(doc), x: box.x, y: box.y, w: box.w, h: box.h, movable: true })
   }
+
+  drawPlacedImages(doc, data.placedImages)
+  return { pageCount: doc.getNumberOfPages(), builtInBoxes }
+}
+
+/**
+ * Images added in the preview editor (e.g. a client logo), drawn last so
+ * they sit on top. Each is a PNG data URL with a page index and its
+ * position/size in mm on that A4 page. An image on a page that no longer
+ * exists (the report got shorter) goes on the last page.
+ */
+function drawPlacedImages(doc, images = []) {
+  if (!images.length) return
+  const pageCount = doc.getNumberOfPages()
+  for (const img of images) {
+    doc.setPage(Math.min(img.page ?? 0, pageCount - 1) + 1)
+    doc.addImage(img.dataUrl, 'PNG', img.x, img.y, img.w, img.h, img.id, 'FAST')
+  }
+  doc.setPage(pageCount)
 }

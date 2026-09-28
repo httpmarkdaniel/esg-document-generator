@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import { emptyReportForm, emptyAssetCategoryRow, validateReportForm } from '../reports/reportData.js'
@@ -7,6 +7,8 @@ import { generateReportPdf } from '../reports/generateReportPdf.js'
 import { downloadBlob } from '../lib/download.js'
 import { formatKg, formatNumber, formatUnit, kgString, toNumber, todayIso } from '../lib/format.js'
 import { RrMultiPicker } from './RrMultiPicker.jsx'
+import { ReportPreviewEditor } from './ReportPreviewEditor.jsx'
+import { withoutReportDataOverrides } from '../reports/reportText.js'
 import { calculateCarbonFromMaterialWeights, calculateSavingsFromNetWeight } from '../calculator/calculatorEngine.js'
 
 /** True when an asset-category row has nothing entered yet. */
@@ -88,6 +90,14 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   const [errors, setErrors] = useState({})
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
+  // Edits made in the preview editor: text overrides / removed images (see
+  // reports/reportText.js), and added images { id, name, dataUrl, page, x, y, w, h } in mm.
+  const [textOverrides, setTextOverrides] = useState({})
+  const [placedImages, setPlacedImages] = useState([])
+  // Bumped to reset the RR picker (its ticks and filters) after "Clear RRs".
+  const [pickerKey, setPickerKey] = useState(0)
+  // The "Items collected" range the RRs filled in, so Clear RRs only clears it if it wasn't typed over.
+  const autoRangeRef = useRef('')
 
   /**
    * Add each RR as its own asset-category row, skipping any RR that's
@@ -108,14 +118,35 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
         const dates = fresh.map((s) => s.receivedDateIso).filter(Boolean).sort()
         const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
         const newRows = fresh.map(rowFromRrSummary)
-        return {
-          ...f,
-          collectionDateRange: f.collectionDateRange || (dates.length ? `${dates[0]} to ${dates[dates.length - 1]}` : ''),
-          rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows],
+        let collectionDateRange = f.collectionDateRange
+        if (!collectionDateRange && dates.length) {
+          collectionDateRange = `${dates[0]} to ${dates[dates.length - 1]}`
+          autoRangeRef.current = collectionDateRange
         }
+        return { ...f, collectionDateRange, rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows] }
       })
+      // New figures: drop hand-edited numbers/client text in the preview editor.
+      setTextOverrides(withoutReportDataOverrides)
     }
     return { added: toAdd, skipped }
+  }
+
+  const rrRowCount = form.rows.filter((r) => r.rrReferenceNo).length
+
+  /** Remove every row that came from an RR (manual/calculator rows stay), and reset the RR picker. */
+  function clearRrs() {
+    setForm((f) => {
+      const kept = f.rows.filter((r) => !r.rrReferenceNo)
+      return {
+        ...f,
+        rows: kept.length ? kept : [emptyAssetCategoryRow()],
+        collectionDateRange: f.collectionDateRange === autoRangeRef.current ? '' : f.collectionDateRange,
+      }
+    })
+    autoRangeRef.current = ''
+    setTextOverrides(withoutReportDataOverrides)
+    setPickerKey((k) => k + 1)
+    setStatus({ tone: 'info', message: `Cleared ${rrRowCount} RR row(s) from the report.` })
   }
 
   function rrAddedMessage({ added, skipped }) {
@@ -144,6 +175,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
         const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
         return { ...f, rows: onlyRowIsBlank ? [newRow] : [...f.rows, newRow] }
       })
+      setTextOverrides(withoutReportDataOverrides)
       setStatus({ tone: 'success', message: 'Calculation added as a new asset category row.' })
     }
     onRowConsumed?.()
@@ -171,6 +203,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   }
 
   const preview = useMemo(() => buildEsgReportData(form), [form])
+  const reportData = useMemo(() => ({ ...preview, textOverrides }), [preview, textOverrides])
 
   /** Validate + build the PDF. Returns { ok:true, blob, filename } or { ok:false }. Never auto-downloads. */
   async function buildReport() {
@@ -181,7 +214,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
       return { ok: false }
     }
     try {
-      const data = buildEsgReportData(form)
+      const data = { ...buildEsgReportData(form), textOverrides, placedImages }
       const { blob, filename } = await generateReportPdf(data)
       return { ok: true, blob, filename }
     } catch (err) {
@@ -205,8 +238,100 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   }
 
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
-      <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5">
+      <Card
+        title="Load from Receiving Reports"
+        subtitle="Tick the RRs to include in this report — each one becomes its own asset category row. Narrow the list by received date or search."
+      >
+        <RrMultiPicker
+          key={pickerKey}
+          applyLabel={(n) => (n === 1 ? 'Add 1 RR to the report' : `Add ${n} RRs to the report`)}
+          onApply={(summaries) => setStatus(rrAddedMessage(addRrRows(summaries)))}
+          clearOnApply
+        />
+        {rrRowCount > 0 && (
+          <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            <span>{rrRowCount} RR(s) in this report.</span>
+            <GhostButton type="button" onClick={clearRrs} className="hover:border-red-200 hover:bg-red-50 hover:text-red-700">
+              Clear RRs
+            </GhostButton>
+          </div>
+        )}
+      </Card>
+
+      <Card
+        title="Detailed Impact Breakdown"
+        subtitle="One row per asset category — matches Table 1 of the client template. Carbon/water/energy/landfill columns are computed, not typed."
+      >
+        {errors.rows && <p className="mb-2 text-xs text-red-600">{errors.rows}</p>}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1500px] border-separate border-spacing-y-1.5 text-sm">
+            <thead>
+              <tr>
+                {ROW_FIELDS.map(([key, label]) => (
+                  <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                    {label}
+                  </th>
+                ))}
+                {COMPUTED_COLUMNS.map(([key, label]) => (
+                  <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                    {label}
+                  </th>
+                ))}
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {form.rows.map((row, i) => {
+                const derived = computeRowDerived(row)
+                return (
+                  <tr key={i}>
+                    {ROW_FIELDS.map(([key, , type]) => (
+                      <td key={key} className="px-1">
+                        <TextInput
+                          type={type}
+                          inputMode={type === 'number' ? 'decimal' : undefined}
+                          value={row[key]}
+                          onChange={(e) => setRow(i, key, e.target.value)}
+                          className="min-w-[90px]"
+                        />
+                        {key === 'item' && row.unmatchedItemTypes?.length > 0 && (
+                          <p className="mt-1 max-w-[220px] text-[11px] font-medium text-amber-700">
+                            Not found in catalog, please input manually — {row.unmatchedItemTypes.slice(0, 3).join(', ')}
+                            {row.unmatchedItemTypes.length > 3 ? ', …' : ''}
+                          </p>
+                        )}
+                      </td>
+                    ))}
+                    {COMPUTED_COLUMNS.map(([key, , format]) => (
+                      <td key={key} className="px-1">
+                        <div className="flex h-[38px] min-w-[90px] items-center rounded-lg border border-gray-200 bg-gray-50 px-2 text-sm text-gray-600">
+                          {format(derived)}
+                        </div>
+                      </td>
+                    ))}
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => removeRow(i)}
+                        className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
+                        aria-label="Remove row"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <GhostButton type="button" onClick={addRow} className="mt-2">
+          + Add asset category
+        </GhostButton>
+      </Card>
+
+      <div className="grid gap-5 lg:grid-cols-2">
         <Card title="Report Details" subtitle='Matches the "Carbon Abatement Report" client template.'>
           <div className="grid gap-4">
             <FormField label="Report Title">
@@ -249,140 +374,62 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
           </div>
         </Card>
 
-        <Card
-          title="Load from Receiving Reports"
-          subtitle="Tick the RRs to include in this report — each one becomes its own asset category row. Narrow the list by received date or search."
-        >
-          <RrMultiPicker
-            applyLabel={(n) => (n === 1 ? 'Add 1 RR to the report' : `Add ${n} RRs to the report`)}
-            onApply={(summaries) => setStatus(rrAddedMessage(addRrRows(summaries)))}
-            clearOnApply
-          />
-        </Card>
-
-        <Card
-          title="Detailed Impact Breakdown"
-          subtitle="One row per asset category — matches Table 1 of the client template. Carbon/water/energy/landfill columns are computed, not typed."
-        >
-          {errors.rows && <p className="mb-2 text-xs text-red-600">{errors.rows}</p>}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1500px] border-separate border-spacing-y-1.5 text-sm">
-              <thead>
-                <tr>
-                  {ROW_FIELDS.map(([key, label]) => (
-                    <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                      {label}
-                    </th>
-                  ))}
-                  {COMPUTED_COLUMNS.map(([key, label]) => (
-                    <th key={key} className="px-1 pb-1 text-left text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                      {label}
-                    </th>
-                  ))}
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {form.rows.map((row, i) => {
-                  const derived = computeRowDerived(row)
-                  return (
-                    <tr key={i}>
-                      {ROW_FIELDS.map(([key, , type]) => (
-                        <td key={key} className="px-1">
-                          <TextInput
-                            type={type}
-                            inputMode={type === 'number' ? 'decimal' : undefined}
-                            value={row[key]}
-                            onChange={(e) => setRow(i, key, e.target.value)}
-                            className="min-w-[90px]"
-                          />
-                          {key === 'item' && row.unmatchedItemTypes?.length > 0 && (
-                            <p className="mt-1 max-w-[220px] text-[11px] font-medium text-amber-700">
-                              Not found in catalog, please input manually — {row.unmatchedItemTypes.slice(0, 3).join(', ')}
-                              {row.unmatchedItemTypes.length > 3 ? ', …' : ''}
-                            </p>
-                          )}
-                        </td>
-                      ))}
-                      {COMPUTED_COLUMNS.map(([key, , format]) => (
-                        <td key={key} className="px-1">
-                          <div className="flex h-[38px] min-w-[90px] items-center rounded-lg border border-gray-200 bg-gray-50 px-2 text-sm text-gray-600">
-                            {format(derived)}
-                          </div>
-                        </td>
-                      ))}
-                      <td>
-                        <button
-                          type="button"
-                          onClick={() => removeRow(i)}
-                          className="rounded-lg px-2 py-2 text-xs text-gray-400 hover:bg-gray-50 hover:text-red-600"
-                          aria-label="Remove row"
-                        >
-                          ✕
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          <GhostButton type="button" onClick={addRow} className="mt-2">
-            + Add asset category
-          </GhostButton>
-        </Card>
-      </div>
-
-      <div className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
-        <Card title="Report Preview">
-          <div className="mb-4 space-y-1 text-sm">
-            <Row label="Client" value={form.clientName} />
-            <Row label="Report Issued" value={preview.reportIssueDateLabel} />
-            <Row label="Asset Categories" value={formatNumber(preview.rows.length, 0)} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              ['Materials Processed', formatKg(preview.totals.materialsTotalKg)],
-              ['Net Carbon Abated', formatUnit(preview.totals.netCarbonAbatedKgCO2e, 'kg CO2e')],
-              ['Water Saved', formatUnit(preview.totals.waterSavedLiters, 'L', 0)],
-              ['Energy Saved', formatUnit(preview.totals.energySavedKwh, 'kWh')],
-              ['Landfill Averted', formatKg(preview.totals.landfillAvertedKg)],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-lg border border-brand-green/15 bg-brand-green-light px-3 py-2.5">
-                <div className="text-[11px] font-medium uppercase tracking-wide text-brand-green/70">{label}</div>
-                <div className="mt-0.5 text-lg font-semibold text-brand-green-dark">{value}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card title="Recycled Materials Summary">
-          <div className="space-y-1.5 text-sm">
-            {preview.recycledMaterials.map((m) => (
-              <div key={m.material} className="flex items-baseline justify-between gap-3 border-b border-gray-50 py-1 last:border-0">
-                <span className="text-gray-600">{m.material}</span>
-                <span className="font-medium text-gray-800">{formatKg(m.quantityKg)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {!hideActions && (
-          <Card>
-            <div className="flex flex-col gap-3">
-              {status && <Banner tone={status.tone}>{status.message}</Banner>}
-              <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
-                {generating ? 'Generating…' : 'Generate PDF Report'}
-              </PrimaryButton>
+        <div className="flex flex-col gap-5">
+          <Card title="Report Summary">
+            <div className="mb-4 space-y-1 text-sm">
+              <Row label="Client" value={form.clientName} />
+              <Row label="Report Issued" value={preview.reportIssueDateLabel} />
+              <Row label="Asset Categories" value={formatNumber(preview.rows.length, 0)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ['Materials Processed', formatKg(preview.totals.materialsTotalKg)],
+                ['Net Carbon Abated', formatUnit(preview.totals.netCarbonAbatedKgCO2e, 'kg CO2e')],
+                ['Water Saved', formatUnit(preview.totals.waterSavedLiters, 'L', 0)],
+                ['Energy Saved', formatUnit(preview.totals.energySavedKwh, 'kWh')],
+                ['Landfill Averted', formatKg(preview.totals.landfillAvertedKg)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-brand-green/15 bg-brand-green-light px-3 py-2.5">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-brand-green/70">{label}</div>
+                  <div className="mt-0.5 text-lg font-semibold text-brand-green-dark">{value}</div>
+                </div>
+              ))}
             </div>
           </Card>
-        )}
-        {hideActions && status && (
-          <Card>
-            <Banner tone={status.tone}>{status.message}</Banner>
+
+          <Card title="Recycled Materials Summary">
+            <div className="space-y-1.5 text-sm">
+              {preview.recycledMaterials.map((m) => (
+                <div key={m.material} className="flex items-baseline justify-between gap-3 border-b border-gray-50 py-1 last:border-0">
+                  <span className="text-gray-600">{m.material}</span>
+                  <span className="font-medium text-gray-800">{formatKg(m.quantityKg)}</span>
+                </div>
+              ))}
+            </div>
           </Card>
-        )}
+        </div>
       </div>
+
+      {/* Status + Generate sit right above the report preview, so they're seen before generating. */}
+      <ReportPreviewEditor
+        data={reportData}
+        overrides={textOverrides}
+        onOverridesChange={setTextOverrides}
+        images={placedImages}
+        onImagesChange={setPlacedImages}
+        actions={
+          (status || !hideActions) && (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <div className="flex-1">{status && <Banner tone={status.tone}>{status.message}</Banner>}</div>
+              {!hideActions && (
+                <PrimaryButton type="button" onClick={handleGenerate} loading={generating} className="shrink-0 sm:w-64">
+                  {generating ? 'Generating…' : 'Generate PDF Report'}
+                </PrimaryButton>
+              )}
+            </div>
+          )
+        }
+      />
     </div>
   )
 })

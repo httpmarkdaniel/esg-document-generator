@@ -1,5 +1,5 @@
-// Renders page 1 of a PDF Blob onto a canvas with pdf.js — used for the
-// certificate preview, so the page fills the canvas exactly and on-page
+// Renders the pages of a PDF Blob to images with pdf.js — used for the
+// certificate and report previews, so each page fills its box exactly and on-page
 // positions (in mm) map straight to screen pixels (a browser PDF viewer in
 // an iframe adds its own margins/zoom, which makes that impossible).
 //
@@ -22,17 +22,26 @@ function loadPdfjs() {
   return pdfjsPromise
 }
 
-/** Draw page 1 of `blob` into `canvas`, `widthPx` wide (height follows the page's aspect ratio). */
-export async function renderPdfPage(blob, canvas, widthPx) {
+/**
+ * Render every page of `blob` to a PNG data URL, `widthPx` wide. Returns the
+ * data URLs in page order (used by the multi-page report preview).
+ */
+export async function renderPdfPagesToImages(blob, widthPx) {
   const lib = await loadPdfjs()
   const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise
   try {
-    const page = await pdf.getPage(1)
-    const base = page.getViewport({ scale: 1 })
-    const viewport = page.getViewport({ scale: widthPx / base.width })
-    canvas.width = Math.round(viewport.width)
-    canvas.height = Math.round(viewport.height)
-    await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport }).promise
+    const images = []
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n)
+      const base = page.getViewport({ scale: 1 })
+      const viewport = page.getViewport({ scale: widthPx / base.width })
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(viewport.width)
+      canvas.height = Math.round(viewport.height)
+      await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport }).promise
+      images.push(canvas.toDataURL('image/png'))
+    }
+    return images
   } finally {
     pdf.destroy()
   }

@@ -4,34 +4,35 @@ import { EditablePage } from './editor/EditablePage.jsx'
 import { ImagesSection, BuiltInSection, TextFieldsSection } from './editor/EditorPanels.jsx'
 import { withText, withoutKey, withSignatures, withHiddenImages, hiddenImageSet, countEdits } from './editor/overrides.js'
 import { placedImagesFromFiles } from './editor/placeImages.js'
-import { generateCertificatePdf } from '../certificate/generateCertificatePdf.js'
-import { loadCertificateAssets } from '../certificate/assets.js'
-import { certificateTextFields } from '../certificate/certificateText.js'
-import { PAGE_W_MM, PAGE_H_MM } from '../certificate/page.js'
-import { HEADER_LOGO_BOX, LOGO_ID, ICONS_ID, COMPLIANCE_LOGOS, complianceLogoBoxes } from '../certificate/builtInImages.js'
+import { generateReportPdf } from '../reports/generateReportPdf.js'
+import { loadReportAssets } from '../reports/assets.js'
+import { reportTextFields } from '../reports/reportText.js'
+import { LETTERHEAD_ID, GRADIENT_BAR_ID, FORM_CODE_ID, REPORT_COMPLIANCE_LOGOS } from '../reports/reportBuiltInImages.js'
 import { renderPdfPagesToImages } from '../lib/renderPdfPage.js'
 
+// The report is A4 portrait, in mm (jsPDF's unit in generateReportPdf.js).
+const PAGE_W_MM = 210
+const PAGE_H_MM = 297
 // How long typing has to pause before the PDF preview re-renders.
-const PREVIEW_DEBOUNCE_MS = 350
+const PREVIEW_DEBOUNCE_MS = 400
 
 /**
- * The real certificate PDF (the exact file "Generate" downloads), re-rendered
- * live as the form changes, plus an editor for every piece of text printed on
- * it, for added images, and for the certificate's own logos. Text edits are
- * overrides on top of the auto-generated text: typing replaces a line,
- * clearing it hides the line, Reset restores the auto text.
+ * The real report PDF (the exact file "Generate" downloads), every page,
+ * re-rendered live as the form changes — plus the same editor as the
+ * certificate: every line of text, added images (dropped on any page), and
+ * the report's own images (letterhead, top bar, form code, compliance logos).
  */
-export function CertificatePreviewEditor({ data, overrides, onOverridesChange, images, onImagesChange, actions }) {
-  const [pageSrc, setPageSrc] = useState(null)
+export function ReportPreviewEditor({ data, overrides, onOverridesChange, images, onImagesChange, actions }) {
+  const [pages, setPages] = useState([])
+  const [layout, setLayout] = useState({ pageCount: 0, builtInBoxes: [] })
   const [rendering, setRendering] = useState(false)
   const [renderError, setRenderError] = useState(null)
   const [editing, setEditing] = useState(false)
   const [selectedImageId, setSelectedImageId] = useState(null)
   const [imageError, setImageError] = useState(null)
 
-  // While editing, the added images are shown as draggable boxes over the
-  // preview (so moving one is instant), so the rendered page leaves them out;
-  // outside editing they're rendered into the page like the final PDF.
+  // While editing, added images are draggable boxes over the pages, so the
+  // rendered pages leave them out; outside editing they're rendered in.
   const renderData = useMemo(() => ({ ...data, placedImages: editing ? [] : images }), [data, images, editing])
 
   useEffect(() => {
@@ -39,10 +40,11 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
     const timer = setTimeout(async () => {
       setRendering(true)
       try {
-        const { blob } = await generateCertificatePdf(renderData)
-        const [src] = await renderPdfPagesToImages(blob, 2200)
+        const { blob, layout: nextLayout } = await generateReportPdf(renderData)
+        const srcs = await renderPdfPagesToImages(blob, 1400)
         if (cancelled) return
-        setPageSrc(src)
+        setPages(srcs)
+        setLayout(nextLayout)
         setRenderError(null)
       } catch (err) {
         console.error(err)
@@ -57,40 +59,36 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
     }
   }, [renderData])
 
-  // Defaults come from the data WITHOUT overrides, so the editor can show
-  // what Reset goes back to.
-  const fields = useMemo(() => certificateTextFields({ ...data, textOverrides: {} }), [data])
+  const fields = useMemo(() => reportTextFields({ ...data, textOverrides: {} }), [data])
   const hidden = useMemo(() => hiddenImageSet(overrides), [overrides])
   const editedCount = countEdits(overrides, fields)
-  const builtInBoxes = useMemo(
-    () => [...(hidden.has(LOGO_ID) ? [] : [{ id: LOGO_ID, name: 'EnviroCycle logo', ...HEADER_LOGO_BOX }]), ...complianceLogoBoxes(hidden)].map((b) => ({ ...b, movable: true })),
-    [hidden],
-  )
+  // An image placed on a page that no longer exists (the report got shorter) shows — and prints — on the last page.
+  const lastPage = Math.max(0, pages.length - 1)
+  const pageOf = (img) => Math.min(img.page ?? 0, lastPage)
 
-  /** Restore built-in images, dropping any movable copies made of them (so they don't show twice). */
+  function setPageImages(page, pageImages) {
+    onImagesChange((prev) => [...prev.filter((img) => pageOf(img) !== page), ...pageImages])
+  }
+
   function restoreImages(ids) {
     const restoring = new Set(ids)
     onOverridesChange(withHiddenImages(overrides, ids, false))
     if (images.some((img) => restoring.has(img.sourceId))) onImagesChange(images.filter((img) => !restoring.has(img.sourceId)))
   }
 
-  /**
-   * Make a built-in logo movable/resizable: it's hidden from the template and
-   * re-added as a placed image with the same picture, at the same spot and
-   * size — so nothing moves until you drag it.
-   */
+  /** Make the form code or a compliance logo movable: hide it and re-add it as a placed image at the same spot. */
   async function editBuiltInImage(box) {
-    const assets = await loadCertificateAssets()
-    const dataUrl = box.id === LOGO_ID ? assets.logo : assets.complianceStripPieces[box.id]
+    const assets = await loadReportAssets()
+    const dataUrl = box.id === FORM_CODE_ID ? assets.formCode : assets.complianceStripPieces[box.id]
     if (!dataUrl) return
     const id = `builtin-${box.id}-${Date.now()}`
-    onImagesChange([...images, { id, name: box.name, dataUrl, page: 0, x: box.x, y: box.y, w: box.w, h: box.h, sourceId: box.id }])
+    onImagesChange([...images, { id, name: box.name, dataUrl, page: box.page, x: box.x, y: box.y, w: box.w, h: box.h, sourceId: box.id }])
     onOverridesChange(withHiddenImages(overrides, [box.id], true))
     setSelectedImageId(id)
   }
 
-  async function addImageFiles(files, at) {
-    const { added, error } = await placedImagesFromFiles(files, { at, pageW: PAGE_W_MM, pageH: PAGE_H_MM })
+  async function addImageFiles(files, at, page = 0) {
+    const { added, error } = await placedImagesFromFiles(files, { at, page, pageW: PAGE_W_MM, pageH: PAGE_H_MM })
     setImageError(error)
     if (added.length) {
       onImagesChange([...images, ...added])
@@ -105,11 +103,11 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
   }
 
   return (
-    <Card title="Certificate Preview" subtitle="This is the exact PDF that gets generated — it updates as you change the form.">
+    <Card title="Report Preview" subtitle="This is the exact PDF that gets generated, every page — it updates as you change the form.">
       {actions && <div className="mb-4 border-b border-gray-100 pb-4">{actions}</div>}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-gray-500">
-          {rendering ? 'Updating preview…' : renderError || 'Up to date'}
+          {rendering ? 'Updating preview…' : renderError || `Up to date · ${pages.length} page(s)`}
           {editedCount > 0 && <> · <strong className="text-amber-700">{editedCount} edit(s) applied</strong></>}
           {images.length > 0 && <> · <strong className="text-amber-700">{images.length} image(s) added</strong></>}
         </span>
@@ -124,33 +122,40 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
             onClick={() => setEditing((e) => !e)}
             className={editing ? 'border-brand-green bg-brand-green-light text-brand-green-dark' : ''}
           >
-            {editing ? 'Done editing' : '✎ Edit certificate'}
+            {editing ? 'Done editing' : '✎ Edit report'}
           </GhostButton>
         </div>
       </div>
 
       <div className={`grid gap-4 ${editing ? 'lg:grid-cols-[minmax(0,1fr)_340px]' : ''}`}>
-        <div className="self-start">
-          <EditablePage
-            src={pageSrc}
-            pageW={PAGE_W_MM}
-            pageH={PAGE_H_MM}
-            editing={editing}
-            builtInBoxes={builtInBoxes}
-            onHideBuiltIn={(id) => onOverridesChange(withHiddenImages(overrides, [id], true))}
-            onEditBuiltIn={editBuiltInImage}
-            images={images}
-            onImagesChange={onImagesChange}
-            selectedImageId={selectedImageId}
-            onSelectImage={setSelectedImageId}
-            onDropFiles={addImageFiles}
-            label="Certificate preview"
-          />
-          <p className="mt-1.5 text-[11px] text-gray-400">Tip: drag an image file (e.g. a client logo) onto the certificate to add it.</p>
+        <div className="max-h-[80vh] overflow-y-auto rounded-lg bg-gray-100 p-3">
+          <div className="mx-auto flex max-w-[720px] flex-col gap-4">
+            {pages.length === 0 && <div className="py-20 text-center text-xs text-gray-400">Rendering preview…</div>}
+            {pages.map((src, page) => (
+              <div key={page}>
+                <div className="mb-1 text-[11px] text-gray-400">Page {page + 1}</div>
+                <EditablePage
+                  src={src}
+                  pageW={PAGE_W_MM}
+                  pageH={PAGE_H_MM}
+                  editing={editing}
+                  builtInBoxes={layout.builtInBoxes.filter((b) => b.page === page)}
+                  onHideBuiltIn={(id) => onOverridesChange(withHiddenImages(overrides, [id], true))}
+                  onEditBuiltIn={editBuiltInImage}
+                  images={images.filter((img) => pageOf(img) === page)}
+                  onImagesChange={(pageImages) => setPageImages(page, pageImages)}
+                  selectedImageId={selectedImageId}
+                  onSelectImage={setSelectedImageId}
+                  onDropFiles={(files, at) => addImageFiles(files, at, page)}
+                  label={`Report page ${page + 1}`}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
         {editing && (
-          <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-gray-200 p-3 lg:max-h-none lg:h-0 lg:min-h-full">
+          <div className="max-h-[80vh] overflow-y-auto rounded-lg border border-gray-200 p-3">
             <ImagesSection
               images={images}
               selectedId={selectedImageId}
@@ -158,13 +163,15 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
               onRemove={removeImage}
               onAddFiles={(files) => addImageFiles(files)}
               error={imageError}
+              pageLabel={(img) => `p. ${pageOf(img) + 1}`}
             />
             <BuiltInSection
               toggles={[
-                { id: LOGO_ID, label: 'EnviroCycle logo (header)' },
-                { id: ICONS_ID, label: 'Stat icons' },
+                { id: LETTERHEAD_ID, label: 'Letterhead (every page)' },
+                { id: GRADIENT_BAR_ID, label: 'Top colour bar (every page)' },
+                { id: FORM_CODE_ID, label: 'Form code' },
               ]}
-              logos={COMPLIANCE_LOGOS}
+              logos={REPORT_COMPLIANCE_LOGOS}
               hidden={hidden}
               images={images}
               onHide={(id) => onOverridesChange(withHiddenImages(overrides, [id], true))}

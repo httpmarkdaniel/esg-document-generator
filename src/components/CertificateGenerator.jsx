@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
-import { Card, PrimaryButton, Banner } from './Card.jsx'
+import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import {
   emptyCertificateForm,
@@ -30,6 +30,8 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   const [textOverrides, setTextOverrides] = useState({})
   // Images added in the preview editor (e.g. a client logo): { id, name, dataUrl, x, y, w, h } in mm.
   const [placedImages, setPlacedImages] = useState([])
+  // Bumped to reset the RR picker (its ticks and filters) after "Clear RRs".
+  const [pickerKey, setPickerKey] = useState(0)
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — we only carry
@@ -108,6 +110,27 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
     onRrsSelected?.(summaries)
   }
 
+  /**
+   * Undo "Use RRs on this certificate": empty the fields the RRs filled in
+   * (recipient, address, weights, material breakdown) and reset the picker.
+   * RR rows already sent to the ESG Report stay there (it has its own Clear RRs).
+   */
+  function clearRrs() {
+    const count = rrSummary?.rrCount ?? 0
+    setRrSummary(null)
+    setForm((f) => ({
+      ...f,
+      recipient: '',
+      companyAddress: '',
+      materialsCollectedKg: '',
+      landfillDivertedKg: '',
+      materials: { metalKg: '', plasticKg: '', glassKg: '', electronicsKg: '' },
+    }))
+    setTextOverrides(withoutDataOverrides)
+    setPickerKey((k) => k + 1)
+    setStatus({ tone: 'info', message: `Cleared ${count} RR(s) from the certificate.` })
+  }
+
   const previewNumber = useMemo(() => generateCertificateNumber(form.certificateType, form), [form])
   const preview = useMemo(() => normalizeCertificateData(form, { certificateNumber: previewNumber }), [form, previewNumber])
   const certificateData = useMemo(() => ({ ...preview, textOverrides }), [preview, textOverrides])
@@ -172,7 +195,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
         title="Load from Receiving Reports"
         subtitle="Source of truth: the RR consolidation Google Sheet. Tick one or more RRs — their weights are combined into this one certificate. Autofills recipient/address/weight only."
       >
-        <RrMultiPicker applyLabel={(n) => (n > 1 ? `Use ${n} RRs on this certificate` : 'Use this RR on the certificate')} onApply={handleRrsApply} />
+        <RrMultiPicker key={pickerKey} applyLabel={(n) => (n > 1 ? `Use ${n} RRs on this certificate` : 'Use this RR on the certificate')} onApply={handleRrsApply} />
         {rrSummary && (
           <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
             <strong>{rrSummary.rrCount === 1 ? rrSummary.referenceNo : `${rrSummary.rrCount} RRs: ${rrSummary.referenceNo}`}</strong> —{' '}
@@ -181,6 +204,11 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
               ? rrSummary.receivedDateFromIso || '—'
               : `${rrSummary.receivedDateFromIso} to ${rrSummary.receivedDateToIso}`}
             {rrSummary.itemTypes.length > 0 && <> · {rrSummary.itemTypes.slice(0, 5).join(', ')}</>}
+            <div className="mt-2 flex justify-end">
+              <GhostButton type="button" onClick={clearRrs} className="hover:border-red-200 hover:bg-red-50 hover:text-red-700">
+                Clear RRs
+              </GhostButton>
+            </div>
           </div>
         )}
       </Card>
