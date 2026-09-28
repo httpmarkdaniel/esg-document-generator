@@ -97,15 +97,23 @@ export function wrapRich(doc, text, { font, size, maxWidth }) {
   return lines.map((ws) => ({ pieces: ws.flatMap((w) => w.pieces), width: ws.reduce((s, w) => s + w.w, 0) }))
 }
 
-/** Draw wrapped lines from wrapRich. `align`: 'left' | 'center'. Baseline of line i = y + i * lineHeight. */
-export function drawRichLines(doc, lines, { font, size, x, y, lineHeight, align = 'left', centerX }) {
+/**
+ * Draw wrapped lines from wrapRich. `align`: 'left' | 'center' | 'justify'.
+ * Justified lines are stretched to `maxWidth` by widening their spaces,
+ * except a paragraph's last line (pass `lastLine: true`), which stays
+ * left-aligned — like Word's "Justify". Baseline of line i = y + i * lineHeight.
+ */
+export function drawRichLines(doc, lines, { font, size, x, y, lineHeight, align = 'left', centerX, maxWidth, lastLine = false }) {
   lines.forEach((line, i) => {
     let cx = align === 'center' ? centerX - line.width / 2 : x
     const baseline = y + i * lineHeight
+    const spaces = line.pieces.filter((p) => p.space).length
+    const isLast = lastLine && i === lines.length - 1
+    const extra = align === 'justify' && !isLast && spaces && maxWidth > line.width ? (maxWidth - line.width) / spaces : 0
     for (const p of line.pieces) {
       setStyle(doc, font, size, p)
       if (!p.space) doc.text(p.text, cx, p.sub ? baseline + size * PT_TO_MM * SUB_DROP_EM : baseline)
-      cx += p.w
+      cx += p.w + (p.space ? extra : 0)
     }
   })
   doc.setFontSize(size)

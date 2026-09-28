@@ -127,7 +127,8 @@ function place(flow, kind, height) {
 function textBlock(flow, kind, text, { x = X_TEXT, size = TEXT_SIZE, lineHeight = LINE, align = 'left' } = {}) {
   if (!text) return
   const { doc } = flow
-  const lines = wrapRich(doc, text, { font: FONT, size, maxWidth: X_RIGHT - x })
+  const maxWidth = X_RIGHT - x
+  const lines = wrapRich(doc, text, { font: FONT, size, maxWidth })
   place(flow, kind, 0)
   lines.forEach((line, i) => {
     if (i > 0) {
@@ -138,7 +139,7 @@ function textBlock(flow, kind, text, { x = X_TEXT, size = TEXT_SIZE, lineHeight 
       }
     }
     doc.setTextColor(...BLACK)
-    drawRichLines(doc, [line], { font: FONT, size, x, y: flow.y, lineHeight, align, centerX: PAGE_W / 2 })
+    drawRichLines(doc, [line], { font: FONT, size, x, y: flow.y, lineHeight, align, centerX: PAGE_W / 2, maxWidth, lastLine: i === lines.length - 1 })
   })
 }
 
@@ -174,7 +175,16 @@ function bullet(flow, text) {
   doc.text('o', X_BULLET, flow.y)
   lines.forEach((line, i) => {
     if (i > 0) flow.y += LINE
-    drawRichLines(doc, [line], { font: FONT, size: TEXT_SIZE, x: X_BULLET_TEXT, y: flow.y, lineHeight: LINE })
+    drawRichLines(doc, [line], {
+      font: FONT,
+      size: TEXT_SIZE,
+      x: X_BULLET_TEXT,
+      y: flow.y,
+      lineHeight: LINE,
+      align: 'justify',
+      maxWidth: X_RIGHT - X_BULLET_TEXT,
+      lastLine: i === lines.length - 1,
+    })
   })
 }
 
@@ -424,12 +434,12 @@ export function drawReportPdf(doc, assets, data) {
 
   // 1. Introduction
   heading(flow, T.h1)
-  for (let i = 0; i < 3; i++) textBlock(flow, 'para', T[`intro${i}`])
+  for (let i = 0; i < 3; i++) textBlock(flow, 'para', T[`intro${i}`], { align: 'justify' })
 
   // 2. Detailed Impact Breakdown
   heading(flow, T.h2)
   subheading(flow, T.h21)
-  textBlock(flow, 'desc', T.p21, { x: X_HEAD })
+  textBlock(flow, 'desc', T.p21, { x: X_HEAD, align: 'justify' })
 
   const n1 = (v) => formatNumber(v, 1)
   const body = rows.map((r, i) => [
@@ -482,7 +492,7 @@ export function drawReportPdf(doc, assets, data) {
 
   // 3. Recycled Materials
   heading(flow, T.h3)
-  textBlock(flow, 'desc', T.p3, { x: X_HEAD })
+  textBlock(flow, 'desc', T.p3, { x: X_HEAD, align: 'justify' })
   table(flow, {
     head: [['Material', 'Quantity (kg)', 'Environmental Benefit']],
     body: recycledMaterials.map((m) => [m.material, n1(m.quantityKg), m.benefit]),
@@ -498,12 +508,12 @@ export function drawReportPdf(doc, assets, data) {
     const head = T[`m${i}Heading`]
     const text = T[`m${i}Body`]
     const combined = [head && `**${head}**`, text].filter(Boolean).join(' ')
-    textBlock(flow, 'para', combined, { x: X_HEAD_TEXT })
+    textBlock(flow, 'para', combined, { x: X_HEAD_TEXT, align: 'justify' })
   })
 
   // 5. Environmental Impact
   heading(flow, T.h5)
-  textBlock(flow, 'para5', T.p5, { x: X_HEAD })
+  textBlock(flow, 'para5', T.p5, { x: X_HEAD, align: 'justify' })
   const groups = [
     ['h51', 'b51_', 3],
     ['h52', 'b52_', 2],
@@ -517,7 +527,7 @@ export function drawReportPdf(doc, assets, data) {
 
   // 6. Conclusion
   heading(flow, T.h6)
-  CONCLUSION_PARAGRAPHS.forEach((_, i) => textBlock(flow, i === 0 ? 'concl' : 'para', T[`concl${i}`]))
+  CONCLUSION_PARAGRAPHS.forEach((_, i) => textBlock(flow, i === 0 ? 'concl' : 'para', T[`concl${i}`], { align: 'justify' }))
 
   drawSignOff(flow, assets, T, !data.textOverrides?.hideSignatures)
 
