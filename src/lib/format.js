@@ -54,3 +54,8 @@ export function todayIso() {
 export function todayDisplay() {
   return formatDate(new Date())
 }
+
+/** A kg value as a form string, rounded to the gram so float sums don't show as "5556.199999999999". */
+export function kgString(value) {
+  return String(Math.round(toNumber(value) * 1000) / 1000)
+}

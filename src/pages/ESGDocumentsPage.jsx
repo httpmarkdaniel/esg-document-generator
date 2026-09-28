@@ -26,11 +26,11 @@ export function ESGDocumentsPage() {
     setActive('report')
   }
 
-  // The Certificate's own RR picker (date range + RR number) also adds that
-  // same RR to the Report as a row — one RR selection feeds both documents,
-  // even though they're on separate tabs.
-  function handleRrSelectedForReport(summary) {
-    setReportRowToAdd({ source: 'rr', summary })
+  // The Certificate's own RR picker also adds the same RRs to the Report,
+  // one row each — one RR selection feeds both documents, even though
+  // they're on separate tabs.
+  function handleRrsSelectedForReport(summaries) {
+    setReportRowToAdd({ source: 'rr', summaries })
   }
 
   return (
@@ -62,7 +62,7 @@ export function ESGDocumentsPage() {
           <CertificateGenerator
             prefillCalculation={certificatePrefill}
             onPrefillConsumed={() => setCertificatePrefill(null)}
-            onRrSelected={handleRrSelectedForReport}
+            onRrsSelected={handleRrsSelectedForReport}
           />
         )}
 

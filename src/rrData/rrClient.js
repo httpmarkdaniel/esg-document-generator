@@ -109,17 +109,10 @@ export async function getRrSummary(referenceNo) {
   )
 }
 
-/**
- * Aggregate every RR whose RECEIVED DATE falls within [startIso, endIso]
- * (inclusive), one summary per RR reference number, sorted by date then
- * reference number (for the Report flow's date-range loader).
- */
-export async function getRrSummariesInRange(startIso, endIso) {
-  const [items, catalogEntries] = await Promise.all([loadItems(), getMaterialCatalog()])
-  const inRange = items.filter((i) => i.receivedDateIso && i.receivedDateIso >= startIso && i.receivedDateIso <= endIso)
-
+/** One summary per RR reference number, sorted by received date then reference number. */
+function summarizeByRef(items, catalogEntries) {
   const byRef = new Map()
-  for (const item of inRange) {
+  for (const item of items) {
     if (!byRef.has(item.referenceNo)) byRef.set(item.referenceNo, [])
     byRef.get(item.referenceNo).push(item)
   }
@@ -127,4 +120,76 @@ export async function getRrSummariesInRange(startIso, endIso) {
   return [...byRef.entries()]
     .map(([referenceNo, refItems]) => summarize(referenceNo, refItems, catalogEntries))
     .sort((a, b) => (a.receivedDateIso || '').localeCompare(b.receivedDateIso || '') || a.referenceNo.localeCompare(b.referenceNo))
+}
+
+/**
+ * Aggregate every RR whose RECEIVED DATE falls within [startIso, endIso]
+ * (inclusive), one summary per RR reference number.
+ */
+export async function getRrSummariesInRange(startIso, endIso) {
+  const [items, catalogEntries] = await Promise.all([loadItems(), getMaterialCatalog()])
+  const inRange = items.filter((i) => i.receivedDateIso && i.receivedDateIso >= startIso && i.receivedDateIso <= endIso)
+  return summarizeByRef(inRange, catalogEntries)
+}
+
+let allSummariesPromise = null
+
+/** Every RR as a summary (for the multi-RR picker), cached for the session. */
+export function getAllRrSummaries() {
+  if (!allSummariesPromise) {
+    allSummariesPromise = Promise.all([loadItems(), getMaterialCatalog()])
+      .then(([items, catalogEntries]) => summarizeByRef(items, catalogEntries))
+      .catch((err) => {
+        allSummariesPromise = null // allow retry on next call
+        throw err
+      })
+  }
+  return allSummariesPromise
+}
+
+/**
+ * Combine several RR summaries into one (for a single certificate covering
+ * multiple RRs): weights and material breakdowns are summed, item types are
+ * unioned. Account/address come from the first RR; `accountNames` lists
+ * every distinct account so the caller can warn when they differ.
+ */
+export function combineRrSummaries(summaries) {
+  if (!summaries.length) return null
+
+  const first = summaries[0]
+  const sum = (key) => summaries.reduce((s, r) => s + r[key], 0)
+  const union = (key) => [...new Set(summaries.flatMap((r) => r[key]))]
+  const totalNetWeight = sum('totalNetWeight')
+  const matchedNetWeight = sum('materialsMatchedNetWeight')
+  const dates = summaries.map((r) => r.receivedDateIso).filter(Boolean).sort()
+
+  return {
+    referenceNo: summaries.map((r) => r.referenceNo).join(', '),
+    referenceNos: summaries.map((r) => r.referenceNo),
+    rrCount: summaries.length,
+    accountName: first.accountName,
+    accountNames: [...new Set(summaries.map((r) => r.accountName).filter(Boolean))],
+    companyName: first.companyName,
+    billingAddress: first.billingAddress,
+    pickupAddress: first.pickupAddress,
+    receivedDateFromIso: dates[0] || null,
+    receivedDateToIso: dates[dates.length - 1] || null,
+    itemCount: sum('itemCount'),
+    totalKilos: sum('totalKilos'),
+    totalPalletWeight: sum('totalPalletWeight'),
+    totalNetWeight,
+    totalQty: sum('totalQty'),
+    itemTypes: union('itemTypes'),
+    materialsKg: {
+      metalKg: summaries.reduce((s, r) => s + r.materialsKg.metalKg, 0),
+      plasticKg: summaries.reduce((s, r) => s + r.materialsKg.plasticKg, 0),
+      glassKg: summaries.reduce((s, r) => s + r.materialsKg.glassKg, 0),
+      electronicsKg: summaries.reduce((s, r) => s + r.materialsKg.electronicsKg, 0),
+    },
+    materialsMatchedNetWeight: matchedNetWeight,
+    materialsMatchedFraction: totalNetWeight > 0 ? matchedNetWeight / totalNetWeight : 0,
+    matchedItemTypes: union('matchedItemTypes'),
+    unmatchedItemTypes: union('unmatchedItemTypes'),
+    items: summaries.flatMap((r) => r.items),
+  }
 }

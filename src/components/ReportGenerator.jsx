@@ -5,8 +5,8 @@ import { emptyReportForm, emptyAssetCategoryRow, validateReportForm } from '../r
 import { buildEsgReportData } from '../reports/reportAggregator.js'
 import { generateReportPdf } from '../reports/generateReportPdf.js'
 import { downloadBlob } from '../lib/download.js'
-import { formatKg, formatNumber, formatUnit, toNumber, todayIso } from '../lib/format.js'
-import { getRrSummariesInRange } from '../rrData/rrClient.js'
+import { formatKg, formatNumber, formatUnit, kgString, toNumber, todayIso } from '../lib/format.js'
+import { RrMultiPicker } from './RrMultiPicker.jsx'
 import { calculateCarbonFromMaterialWeights, calculateSavingsFromNetWeight } from '../calculator/calculatorEngine.js'
 
 /** True when an asset-category row has nothing entered yet. */
@@ -42,14 +42,16 @@ function rowFromCalculation({ input, result }, index) {
 function rowFromRrSummary(summary) {
   return {
     item: `RR ${summary.referenceNo} — ${summary.accountName}`,
-    qtyKg: String(summary.totalNetWeight),
-    metalKg: String(summary.materialsKg.metalKg),
-    plasticKg: String(summary.materialsKg.plasticKg),
-    glassKg: String(summary.materialsKg.glassKg),
-    electronicsKg: String(summary.materialsKg.electronicsKg),
-    // Not a form field — carried alongside the row purely so the table can
-    // flag item types the material catalog didn't cover. Never sent to the PDF.
+    qtyKg: kgString(summary.totalNetWeight),
+    metalKg: kgString(summary.materialsKg.metalKg),
+    plasticKg: kgString(summary.materialsKg.plasticKg),
+    glassKg: kgString(summary.materialsKg.glassKg),
+    electronicsKg: kgString(summary.materialsKg.electronicsKg),
+    // Not form fields — carried alongside the row so the table can flag item
+    // types the material catalog didn't cover, and so the same RR is never
+    // added twice. Never sent to the PDF.
     unmatchedItemTypes: summary.unmatchedItemTypes,
+    rrReferenceNo: summary.referenceNo,
   }
 }
 
@@ -87,26 +89,63 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
 
-  const [rrRangeStart, setRrRangeStart] = useState('')
-  const [rrRangeEnd, setRrRangeEnd] = useState('')
-  const [rrLoading, setRrLoading] = useState(false)
-  const [rrError, setRrError] = useState(null)
+  /**
+   * Add each RR as its own asset-category row, skipping any RR that's
+   * already in the table. Returns { added, skipped } reference numbers.
+   */
+  function addRrRows(summaries) {
+    const alreadyIn = (rows) => new Set(rows.map((r) => r.rrReferenceNo).filter(Boolean))
+    const existing = alreadyIn(form.rows)
+    const toAdd = summaries.filter((s) => !existing.has(s.referenceNo))
+    const skipped = summaries.filter((s) => existing.has(s.referenceNo)).map((s) => s.referenceNo)
+    if (toAdd.length) {
+      setForm((f) => {
+        // Re-check against the latest rows too, so an RR can never be added
+        // twice even if this runs again before the state update lands.
+        const latest = alreadyIn(f.rows)
+        const fresh = toAdd.filter((s) => !latest.has(s.referenceNo))
+        if (!fresh.length) return f
+        const dates = fresh.map((s) => s.receivedDateIso).filter(Boolean).sort()
+        const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
+        const newRows = fresh.map(rowFromRrSummary)
+        return {
+          ...f,
+          collectionDateRange: f.collectionDateRange || (dates.length ? `${dates[0]} to ${dates[dates.length - 1]}` : ''),
+          rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows],
+        }
+      })
+    }
+    return { added: toAdd, skipped }
+  }
 
-  // Apply a calculation (from the Impact Calculator tab) or an RR summary
-  // (from the Certificate's RR picker) as a new asset-category row. Either
+  function rrAddedMessage({ added, skipped }) {
+    const skippedNote = skipped.length ? ` Skipped ${skipped.length} already in the table (${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ', …' : ''}).` : ''
+    if (!added.length) return { tone: 'info', message: `Nothing new to add.${skippedNote}` }
+    const totalWeight = added.reduce((s, r) => s + r.totalNetWeight, 0)
+    const matchedWeight = added.reduce((s, r) => s + r.materialsMatchedNetWeight, 0)
+    const matchedPct = formatNumber(totalWeight > 0 ? (matchedWeight / totalWeight) * 100 : 0, 0)
+    return {
+      tone: 'success',
+      message: `Added ${added.length} RR(s) as asset category rows (${formatKg(totalWeight)} net weight). Material Breakdown (and Carbon) auto-filled from the material split catalog for ~${matchedPct}% of the weight by item type — check rows with an uncovered item type and adjust if needed.${skippedNote}`,
+    }
+  }
+
+  // Apply a calculation (from the Impact Calculator tab) or RR summaries
+  // (from the Certificate's RR picker) as new asset-category rows. Either
   // way, only item/qtyKg/material-breakdown get carried across — never
   // re-derive carbon/water/energy here, that happens downstream.
   useEffect(() => {
     if (!rowToAdd) return
-    setForm((f) => {
-      const newRow = rowToAdd.source === 'rr' ? rowFromRrSummary(rowToAdd.summary) : rowFromCalculation(rowToAdd, f.rows.length + 1)
-      const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
-      return { ...f, rows: onlyRowIsBlank ? [newRow] : [...f.rows, newRow] }
-    })
-    setStatus({
-      tone: 'success',
-      message: rowToAdd.source === 'rr' ? `RR ${rowToAdd.summary.referenceNo} added as a new asset category row.` : 'Calculation added as a new asset category row.',
-    })
+    if (rowToAdd.source === 'rr') {
+      setStatus(rrAddedMessage(addRrRows(rowToAdd.summaries)))
+    } else {
+      setForm((f) => {
+        const newRow = rowFromCalculation(rowToAdd, f.rows.length + 1)
+        const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
+        return { ...f, rows: onlyRowIsBlank ? [newRow] : [...f.rows, newRow] }
+      })
+      setStatus({ tone: 'success', message: 'Calculation added as a new asset category row.' })
+    }
     onRowConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowToAdd])
@@ -129,42 +168,6 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
 
   function removeRow(index) {
     setForm((f) => ({ ...f, rows: f.rows.filter((_, i) => i !== index) }))
-  }
-
-  async function handleLoadRrRange() {
-    if (!rrRangeStart || !rrRangeEnd) {
-      setRrError('Pick both a start and end date.')
-      return
-    }
-    setRrLoading(true)
-    setRrError(null)
-    try {
-      const summaries = await getRrSummariesInRange(rrRangeStart, rrRangeEnd)
-      if (!summaries.length) {
-        setRrError('No RRs found received in that date range.')
-        return
-      }
-      const newRows = summaries.map(rowFromRrSummary)
-      setForm((f) => {
-        const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
-        return {
-          ...f,
-          collectionDateRange: f.collectionDateRange || `${rrRangeStart} to ${rrRangeEnd}`,
-          rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows],
-        }
-      })
-      const totalWeight = summaries.reduce((s, r) => s + r.totalNetWeight, 0)
-      const matchedWeight = summaries.reduce((s, r) => s + r.materialsMatchedNetWeight, 0)
-      const matchedPct = formatNumber(totalWeight > 0 ? (matchedWeight / totalWeight) * 100 : 0, 0)
-      setStatus({
-        tone: 'success',
-        message: `Loaded ${summaries.length} RR(s) received ${rrRangeStart} to ${rrRangeEnd}. Material Breakdown (and Carbon) auto-filled from the material split catalog for ~${matchedPct}% of the total weight by item type — check rows with an uncovered item type and adjust if needed.`,
-      })
-    } catch (err) {
-      setRrError(err.message)
-    } finally {
-      setRrLoading(false)
-    }
   }
 
   const preview = useMemo(() => buildEsgReportData(form), [form])
@@ -246,25 +249,15 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
           </div>
         </Card>
 
-        <Card title="Load from Receiving Reports" subtitle="Pull every RR received in a date range straight from the Google Sheet.">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <FormField label="Received From">
-              <TextInput type="date" value={rrRangeStart} onChange={(e) => setRrRangeStart(e.target.value)} />
-            </FormField>
-            <FormField label="Received To">
-              <TextInput type="date" value={rrRangeEnd} onChange={(e) => setRrRangeEnd(e.target.value)} />
-            </FormField>
-            <div className="flex items-end">
-              <PrimaryButton type="button" onClick={handleLoadRrRange} loading={rrLoading} className="w-full">
-                {rrLoading ? 'Loading…' : 'Load RRs in range'}
-              </PrimaryButton>
-            </div>
-          </div>
-          {rrError && (
-            <div className="mt-2">
-              <Banner tone="error">{rrError}</Banner>
-            </div>
-          )}
+        <Card
+          title="Load from Receiving Reports"
+          subtitle="Tick the RRs to include in this report — each one becomes its own asset category row. Narrow the list by received date or search."
+        >
+          <RrMultiPicker
+            applyLabel={(n) => (n === 1 ? 'Add 1 RR to the report' : `Add ${n} RRs to the report`)}
+            onApply={(summaries) => setStatus(rrAddedMessage(addRrRows(summaries)))}
+            clearOnApply
+          />
         </Card>
 
         <Card

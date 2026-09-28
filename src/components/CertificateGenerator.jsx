@@ -10,11 +10,12 @@ import {
 import { generateCertificatePdf } from '../certificate/generateCertificatePdf.js'
 import { CERTIFICATE_TYPE_LIST } from '../lib/brand.js'
 import { downloadBlob } from '../lib/download.js'
-import { formatKg, formatNumber, formatUnit, todayIso } from '../lib/format.js'
-import { getRrNumbers, getRrSummary, getRrSummariesInRange } from '../rrData/rrClient.js'
+import { formatKg, formatNumber, formatUnit, kgString, todayIso } from '../lib/format.js'
+import { combineRrSummaries } from '../rrData/rrClient.js'
+import { RrMultiPicker } from './RrMultiPicker.jsx'
 
 export const CertificateGenerator = forwardRef(function CertificateGenerator(
-  { prefillCalculation, onPrefillConsumed, onRrSelected, hideActions = false },
+  { prefillCalculation, onPrefillConsumed, onRrsSelected, hideActions = false },
   ref,
 ) {
   const [form, setForm] = useState({ ...emptyCertificateForm(), periodStart: todayIso(), periodEnd: todayIso(), givenDate: todayIso() })
@@ -22,43 +23,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   const [status, setStatus] = useState(null)
   const [generating, setGenerating] = useState(false)
 
-  const [rrNumbers, setRrNumbers] = useState([])
-  const [rrInput, setRrInput] = useState('')
-  const [rrLoading, setRrLoading] = useState(false)
   const [rrSummary, setRrSummary] = useState(null)
-  const [rrError, setRrError] = useState(null)
-
-  const [rrRangeStart, setRrRangeStart] = useState('')
-  const [rrRangeEnd, setRrRangeEnd] = useState('')
-  const [rrRangeLoading, setRrRangeLoading] = useState(false)
-  const [rrRangeError, setRrRangeError] = useState(null)
-  const [rrFilteredNumbers, setRrFilteredNumbers] = useState(null) // null = no filter (show all)
-
-  useEffect(() => {
-    getRrNumbers()
-      .then(setRrNumbers)
-      .catch((err) => setRrError(err.message))
-  }, [])
-
-  async function handleLoadRrRange() {
-    if (!rrRangeStart || !rrRangeEnd) {
-      setRrRangeError('Pick both a start and end date.')
-      return
-    }
-    setRrRangeLoading(true)
-    setRrRangeError(null)
-    try {
-      const summaries = await getRrSummariesInRange(rrRangeStart, rrRangeEnd)
-      setRrFilteredNumbers(summaries.map((s) => s.referenceNo))
-      if (!summaries.length) setRrRangeError('No RRs found received in that date range.')
-    } catch (err) {
-      setRrRangeError(err.message)
-    } finally {
-      setRrRangeLoading(false)
-    }
-  }
-
-  const rrOptionList = rrFilteredNumbers ?? rrNumbers
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — we only carry
@@ -99,45 +64,40 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
     setStatus(null)
   }
 
-  async function handleRrSelect(referenceNo) {
-    setRrInput(referenceNo)
-    if (!rrOptionList.includes(referenceNo)) {
-      setRrSummary(null)
-      return
-    }
-    setRrLoading(true)
-    setRrError(null)
-    try {
-      const summary = await getRrSummary(referenceNo)
-      setRrSummary(summary)
-      setForm((f) => ({
-        ...f,
-        recipient: summary.accountName || f.recipient,
-        companyAddress: summary.pickupAddress || summary.billingAddress || f.companyAddress,
-        materialsCollectedKg: String(summary.totalNetWeight),
-        landfillDivertedKg: String(summary.totalNetWeight),
-        materials: {
-          metalKg: String(summary.materialsKg.metalKg),
-          plasticKg: String(summary.materialsKg.plasticKg),
-          glassKg: String(summary.materialsKg.glassKg),
-          electronicsKg: String(summary.materialsKg.electronicsKg),
-        },
-      }))
-      const matchedPct = formatNumber(summary.materialsMatchedFraction * 100, 0)
-      const coverageNote =
-        summary.materialsMatchedFraction >= 0.999
-          ? 'Material Breakdown auto-filled from the material split catalog — Carbon now computes automatically too.'
-          : `Material Breakdown auto-filled from the material split catalog for ${matchedPct}% of the weight (by item type) — the rest (${summary.unmatchedItemTypes.slice(0, 3).join(', ') || 'some items'}) isn't in the catalog, so adjust the breakdown if needed.`
-      setStatus({
-        tone: 'success',
-        message: `Autofilled from RR ${referenceNo} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). ${coverageNote} Also added to the Report.`,
-      })
-      onRrSelected?.(summary)
-    } catch (err) {
-      setRrError(err.message)
-    } finally {
-      setRrLoading(false)
-    }
+  // Several RRs can go on one certificate: their weights and material
+  // breakdowns are summed (combineRrSummaries), and each RR is also added to
+  // the Report as its own row.
+  function handleRrsApply(summaries) {
+    const summary = combineRrSummaries(summaries)
+    setRrSummary(summary)
+    setForm((f) => ({
+      ...f,
+      recipient: summary.accountName || f.recipient,
+      companyAddress: summary.pickupAddress || summary.billingAddress || f.companyAddress,
+      materialsCollectedKg: kgString(summary.totalNetWeight),
+      landfillDivertedKg: kgString(summary.totalNetWeight),
+      materials: {
+        metalKg: kgString(summary.materialsKg.metalKg),
+        plasticKg: kgString(summary.materialsKg.plasticKg),
+        glassKg: kgString(summary.materialsKg.glassKg),
+        electronicsKg: kgString(summary.materialsKg.electronicsKg),
+      },
+    }))
+    const matchedPct = formatNumber(summary.materialsMatchedFraction * 100, 0)
+    const coverageNote =
+      summary.materialsMatchedFraction >= 0.999
+        ? 'Material Breakdown auto-filled from the material split catalog — Carbon now computes automatically too.'
+        : `Material Breakdown auto-filled from the material split catalog for ${matchedPct}% of the weight (by item type) — the rest (${summary.unmatchedItemTypes.slice(0, 3).join(', ') || 'some items'}) isn't in the catalog, so adjust the breakdown if needed.`
+    const rrLabel = summary.rrCount === 1 ? `RR ${summary.referenceNo}` : `${summary.rrCount} RRs`
+    const accountNote =
+      summary.accountNames.length > 1
+        ? ` Heads up: these RRs belong to ${summary.accountNames.length} different accounts (${summary.accountNames.slice(0, 3).join(', ')}${summary.accountNames.length > 3 ? ', …' : ''}) — Recipient was set to the first one, check it.`
+        : ''
+    setStatus({
+      tone: summary.accountNames.length > 1 ? 'info' : 'success',
+      message: `Autofilled from ${rrLabel} (${summary.itemCount} item row(s), ${formatKg(summary.totalNetWeight)} net weight). ${coverageNote} Also added to the Report.${accountNote}`,
+    })
+    onRrsSelected?.(summaries)
   }
 
   const previewNumber = useMemo(() => generateCertificateNumber(form.certificateType, form), [form])
@@ -199,65 +159,18 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
         </div>
       </Card>
 
-      <Card title="Load from Receiving Report" subtitle="Source of truth: the RR consolidation Google Sheet. Autofills recipient/address/weight only.">
-        <div className="mb-4 border-b border-gray-100 pb-4">
-          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Load from Receiving Reports</div>
-          <p className="mb-2 text-xs text-gray-400">Pull every RR received in a date range straight from the Google Sheet, to narrow the RR Number list below.</p>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <FormField label="Received From">
-              <TextInput type="date" value={rrRangeStart} onChange={(e) => setRrRangeStart(e.target.value)} />
-            </FormField>
-            <FormField label="Received To">
-              <TextInput type="date" value={rrRangeEnd} onChange={(e) => setRrRangeEnd(e.target.value)} />
-            </FormField>
-            <div className="flex items-end">
-              <PrimaryButton type="button" onClick={handleLoadRrRange} loading={rrRangeLoading} className="w-full">
-                {rrRangeLoading ? 'Loading…' : 'Load RRs in range'}
-              </PrimaryButton>
-            </div>
-          </div>
-          {rrRangeError && (
-            <div className="mt-2">
-              <Banner tone="error">{rrRangeError}</Banner>
-            </div>
-          )}
-          {rrFilteredNumbers && !rrRangeError && (
-            <p className="mt-2 text-xs text-gray-400">
-              Showing {rrFilteredNumbers.length} RR(s) received {rrRangeStart} to {rrRangeEnd}.{' '}
-              <button
-                type="button"
-                onClick={() => setRrFilteredNumbers(null)}
-                className="font-medium text-brand-green hover:underline"
-              >
-                Clear filter
-              </button>
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="flex-1">
-            <FormField label="RR Number" hint={rrOptionList.length ? `${rrOptionList.length} RR number(s) available` : 'Loading…'}>
-              <TextInput
-                list="rr-number-options"
-                value={rrInput}
-                onChange={(e) => handleRrSelect(e.target.value)}
-                placeholder="Start typing an RR number, e.g. S18516"
-              />
-              <datalist id="rr-number-options">
-                {rrOptionList.map((rr) => (
-                  <option key={rr} value={rr} />
-                ))}
-              </datalist>
-            </FormField>
-          </div>
-          {rrLoading && <span className="pb-2.5 text-xs text-gray-400">Loading…</span>}
-        </div>
-        {rrError && <Banner tone="error">{rrError}</Banner>}
+      <Card
+        title="Load from Receiving Reports"
+        subtitle="Source of truth: the RR consolidation Google Sheet. Tick one or more RRs — their weights are combined into this one certificate. Autofills recipient/address/weight only."
+      >
+        <RrMultiPicker applyLabel={(n) => (n > 1 ? `Use ${n} RRs on this certificate` : 'Use this RR on the certificate')} onApply={handleRrsApply} />
         {rrSummary && (
-          <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-            <strong>{rrSummary.referenceNo}</strong> — {rrSummary.accountName} · {rrSummary.itemCount} item row(s) ·{' '}
-            {formatKg(rrSummary.totalNetWeight)} net weight · received {rrSummary.receivedDate || '—'}
+          <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            <strong>{rrSummary.rrCount === 1 ? rrSummary.referenceNo : `${rrSummary.rrCount} RRs: ${rrSummary.referenceNo}`}</strong> —{' '}
+            {rrSummary.accountNames.join(', ') || '—'} · {rrSummary.itemCount} item row(s) · {formatKg(rrSummary.totalNetWeight)} net weight · received{' '}
+            {rrSummary.receivedDateFromIso === rrSummary.receivedDateToIso
+              ? rrSummary.receivedDateFromIso || '—'
+              : `${rrSummary.receivedDateFromIso} to ${rrSummary.receivedDateToIso}`}
             {rrSummary.itemTypes.length > 0 && <> · {rrSummary.itemTypes.slice(0, 5).join(', ')}</>}
           </div>
         )}
