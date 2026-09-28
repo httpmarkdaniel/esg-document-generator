@@ -100,7 +100,7 @@ const GAPS = {
   'desc>table': 9,
   'heading>para5': 6,
   'para5>sub': 8.8,
-  'heading>concl': 4.6,
+  'heading>concl': 8.7, // one blank line under "6. Conclusion", like the other section headings
   'concl>signoff': 12.7,
   'para>signoff': 12.7,
 }
