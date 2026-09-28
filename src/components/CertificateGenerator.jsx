@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Card, PrimaryButton, GhostButton, Banner } from './Card.jsx'
 import { FormField, TextInput, inputErrorClass } from './FormField.jsx'
 import {
@@ -15,6 +15,7 @@ import { combineRrSummaries } from '../rrData/rrClient.js'
 import { RrMultiPicker } from './RrMultiPicker.jsx'
 import { CertificatePreviewEditor } from './CertificatePreviewEditor.jsx'
 import { withoutDataOverrides } from '../certificate/certificateText.js'
+import { loadDesigns, saveDesign } from '../lib/designStore.js'
 
 export const CertificateGenerator = forwardRef(function CertificateGenerator(
   { prefillCalculation, onPrefillConsumed, onRrsSelected, hideActions = false },
@@ -32,6 +33,20 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   const [placedImages, setPlacedImages] = useState([])
   // Bumped to reset the RR picker (its ticks and filters) after "Clear RRs".
   const [pickerKey, setPickerKey] = useState(0)
+  // Custom (Canva) designs, one per certificate type, remembered in the browser (see lib/designStore.js).
+  const [designs, setDesigns] = useState({})
+  const saveTimers = useRef({})
+
+  useEffect(() => {
+    loadDesigns().then((saved) => setDesigns((current) => ({ ...saved, ...current })))
+  }, [])
+
+  function setDesign(type, design) {
+    setDesigns((current) => ({ ...current, [type]: design }))
+    // Dragging a field changes the design many times a second — save once it settles.
+    clearTimeout(saveTimers.current[type])
+    saveTimers.current[type] = setTimeout(() => saveDesign(type, design), 500)
+  }
 
   // Apply a calculation handed over from the Impact Calculator tab. The
   // calculator is the source of truth for these numbers — we only carry
@@ -134,6 +149,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
   const previewNumber = useMemo(() => generateCertificateNumber(form.certificateType, form), [form])
   const preview = useMemo(() => normalizeCertificateData(form, { certificateNumber: previewNumber }), [form, previewNumber])
   const certificateData = useMemo(() => ({ ...preview, textOverrides }), [preview, textOverrides])
+  const design = designs[form.certificateType] ?? null
 
   /** Validate + build the PDF. Returns { ok:true, blob, filename } or { ok:false }. Never auto-downloads. */
   async function buildCertificate() {
@@ -144,7 +160,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
       return { ok: false }
     }
     try {
-      const data = { ...normalizeCertificateData(form, { certificateNumber: previewNumber }), textOverrides, placedImages }
+      const data = { ...normalizeCertificateData(form, { certificateNumber: previewNumber }), textOverrides, placedImages, customDesign: design }
       const { blob, filename } = await generateCertificatePdf(data)
       return { ok: true, blob, filename }
     } catch (err) {
@@ -374,6 +390,8 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
         onOverridesChange={setTextOverrides}
         images={placedImages}
         onImagesChange={setPlacedImages}
+        design={design}
+        onDesignChange={(d) => setDesign(form.certificateType, d)}
         actions={
           (status || !hideActions) && (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start">

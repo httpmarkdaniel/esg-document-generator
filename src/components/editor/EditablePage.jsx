@@ -4,9 +4,10 @@ import { BuiltInImagesLayer } from './BuiltInImagesLayer.jsx'
 
 /**
  * One rendered PDF page in a preview editor: the page image, plus (in edit
- * mode) remove/move targets on the built-in images and the draggable images
- * added to this page. Drop an image file anywhere on the page to add it
- * there. All positions are mm on a `pageW × pageH` page, so they map 1:1 to
+ * mode) remove/move targets on the built-in images, the draggable images
+ * added to this page, and any `extraLayer` (e.g. custom-design field
+ * handles). Drop an image file anywhere on the page to add it there. All
+ * positions are mm on a `pageW × pageH` page, so they map 1:1 to
  * percentages of this box.
  */
 export function EditablePage({
@@ -23,6 +24,7 @@ export function EditablePage({
   onSelectImage,
   onDropFiles,
   label = 'Page preview',
+  extraLayer = null,
 }) {
   const [dropActive, setDropActive] = useState(false)
 
@@ -57,6 +59,7 @@ export function EditablePage({
           <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">Rendering preview…</div>
         )}
         {editing && <BuiltInImagesLayer boxes={builtInBoxes} pageW={pageW} pageH={pageH} onHide={onHideBuiltIn} onEdit={onEditBuiltIn} />}
+        {editing && extraLayer}
         {editing && (
           <PlacedImagesLayer images={images} onChange={onImagesChange} selectedId={selectedImageId} onSelect={onSelectImage} pageW={pageW} pageH={pageH} />
         )}

@@ -7,23 +7,47 @@ import { jsPDF } from 'jspdf'
 import { drawCertificate } from './certificateTemplate.js'
 import { loadCertificateAssets } from './assets.js'
 import { loadPoppinsFonts, registerPoppins } from './fonts.js'
+import { mergeDesignFields } from './customDesign.js'
+import { loadReportFonts, registerReportFonts } from '../reports/fonts.js'
 import { formalizeForFilename, formalFilename } from '../lib/download.js'
 import { CERTIFICATE_TYPES } from '../lib/brand.js'
 
+function newDoc() {
+  return new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+}
+
 /**
  * @param {import('./certificateData.js').normalizeCertificateData extends (...a: any) => infer R ? R : never} data
- * @returns {Promise<{ blob: Blob, filename: string }>}
+ *   plus optional `customDesign` (see customDesign.js), `textOverrides`, `placedImages`.
+ * @returns {Promise<{ blob: Blob, filename: string, layout: { fields: object, fieldBoxes?: object, customFields?: object } }>}
  */
 export async function generateCertificatePdf(data) {
-  const [assets, fonts] = await Promise.all([loadCertificateAssets(), loadPoppinsFonts()])
+  const assets = await loadCertificateAssets()
+  let doc
+  let layout
 
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-  registerPoppins(doc, fonts)
-  drawCertificate(doc, assets, data)
+  if (data.customDesign) {
+    // Record the regular layout first (never shown): it's where every field
+    // starts on the design until it's moved in the editor.
+    const fonts = await loadReportFonts() // Lora + Poppins, the design fields' font choices
+    const probe = newDoc()
+    registerPoppins(probe, fonts.poppins)
+    const { fields } = drawCertificate(probe, assets, { ...data, customDesign: null, placedImages: [] })
+    const customFields = mergeDesignFields(fields, data.customDesign.fields)
+
+    doc = newDoc()
+    registerReportFonts(doc, fonts)
+    const { fieldBoxes } = drawCertificate(doc, assets, { ...data, customFields })
+    layout = { fields, customFields, fieldBoxes }
+  } else {
+    doc = newDoc()
+    registerPoppins(doc, await loadPoppinsFonts())
+    layout = drawCertificate(doc, assets, data)
+  }
 
   // Formal filename, e.g. "Environmental Impact Certificate - Acme Corporation - EIC-2026-0001.pdf"
   const typeLabel = CERTIFICATE_TYPES[data.certificateType]?.label || 'Certificate'
   const filename = formalFilename([formalizeForFilename(typeLabel), formalizeForFilename(data.recipient, 'Recipient'), formalizeForFilename(data.certificateNumber)], 'pdf')
   const blob = doc.output('blob')
-  return { blob, filename }
+  return { blob, filename, layout }
 }
