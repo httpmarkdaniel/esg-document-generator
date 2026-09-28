@@ -14,6 +14,8 @@
 
 export const LETTERHEAD_ID = 'letterhead'
 export const GRADIENT_BAR_ID = 'gradientBar'
+// The RECO2E / HMRCO2 VERIFIED stamp behind the reviewer's signature — appears once, so it can also be moved.
+export const STAMP_ID = 'reco2Stamp'
 
 export const STRIP_PX_WIDTH = 1074
 const ROW_BANDS = [
@@ -54,6 +56,7 @@ export const REPORT_COMPLIANCE_LOGOS = [
 ]
 
 export const REPORT_BUILT_IN_IMAGES = [
+  { id: STAMP_ID, name: 'RECO2 stamp' },
   { id: LETTERHEAD_ID, name: 'Letterhead (every page)' },
   { id: GRADIENT_BAR_ID, name: 'Top colour bar (every page)' },
   ...REPORT_COMPLIANCE_LOGOS.map(({ id, name }) => ({ id, name })),

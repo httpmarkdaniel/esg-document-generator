@@ -6,7 +6,8 @@ import { withText, withoutKey, withSignatures, withHiddenImages, hiddenImageSet,
 import { placedImagesFromFiles } from './editor/placeImages.js'
 import { generateReportPdf } from '../reports/generateReportPdf.js'
 import { reportTextFields } from '../reports/reportText.js'
-import { LETTERHEAD_ID, GRADIENT_BAR_ID, REPORT_COMPLIANCE_LOGOS } from '../reports/reportBuiltInImages.js'
+import { LETTERHEAD_ID, GRADIENT_BAR_ID, STAMP_ID, REPORT_COMPLIANCE_LOGOS } from '../reports/reportBuiltInImages.js'
+import { loadReportAssets } from '../reports/assets.js'
 import { renderPdfPagesToImages } from '../lib/renderPdfPage.js'
 
 // The report is A4 portrait, in mm (jsPDF's unit in generateReportPdf.js).
@@ -76,6 +77,16 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
   }
 
 
+  /** Make the stamp movable: hide it and re-add it as a placed image at the same spot and size. */
+  async function editBuiltInImage(box) {
+    if (box.id !== STAMP_ID) return
+    const assets = await loadReportAssets()
+    const id = `builtin-${box.id}-${Date.now()}`
+    onImagesChange([...images, { id, name: box.name, dataUrl: assets.reco2Stamp, page: box.page, x: box.x, y: box.y, w: box.w, h: box.h, sourceId: box.id }])
+    onOverridesChange(withHiddenImages(overrides, [box.id], true))
+    setSelectedImageId(id)
+  }
+
   async function addImageFiles(files, at, page = 0) {
     const { added, error } = await placedImagesFromFiles(files, { at, page, pageW: PAGE_W_MM, pageH: PAGE_H_MM })
     setImageError(error)
@@ -130,7 +141,7 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
                   editing={editing}
                   builtInBoxes={layout.builtInBoxes.filter((b) => b.page === page)}
                   onHideBuiltIn={(id) => onOverridesChange(withHiddenImages(overrides, [id], true))}
-                  onEditBuiltIn={() => {}}
+                  onEditBuiltIn={editBuiltInImage}
                   images={images.filter((img) => pageOf(img) === page)}
                   onImagesChange={(pageImages) => setPageImages(page, pageImages)}
                   selectedImageId={selectedImageId}
@@ -158,6 +169,7 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
               toggles={[
                 { id: LETTERHEAD_ID, label: 'Letterhead (every page)' },
                 { id: GRADIENT_BAR_ID, label: 'Top colour bar (every page)' },
+                { id: STAMP_ID, label: 'RECO2 stamp (behind Laconsay)' },
               ]}
               logos={REPORT_COMPLIANCE_LOGOS}
               hidden={hidden}

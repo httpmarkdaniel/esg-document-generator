@@ -10,6 +10,8 @@
 import logoDarkUrl from '../assets/report/logo-dark.png'
 import complianceStripUrl from '../assets/report/compliance-strip.png'
 import gradientBarUrl from '../assets/report/gradient-bar.png'
+// The RECO2E / HMRCO2 VERIFIED stamp, cropped from the reference's sign-off (smoothed 4x; the source is low-res).
+import reco2StampUrl from '../assets/report/reco2-stamp.png'
 // Same pen signatures as the certificate, for the sign-off lines.
 import sigSanchezUrl from '../assets/certificate/sig-sanchez.png'
 import sigLaconsayUrl from '../assets/certificate/sig-laconsay.png'
@@ -68,14 +70,15 @@ function cropStripPieces(stripDataUrl) {
 
 /** Load (and cache) every report brand asset as a data URL. */
 export async function loadReportAssets() {
-  const [logoDark, complianceStrip, gradientBar, sigSanchez, sigLaconsay, sigBweheni] = await Promise.all([
+  const [logoDark, complianceStrip, gradientBar, reco2Stamp, sigSanchez, sigLaconsay, sigBweheni] = await Promise.all([
     loadAsDataUrl(logoDarkUrl),
     loadAsDataUrl(complianceStripUrl),
     loadAsDataUrl(gradientBarUrl),
+    loadAsDataUrl(reco2StampUrl),
     loadAsDataUrl(sigSanchezUrl),
     loadAsDataUrl(sigLaconsayUrl),
     loadAsDataUrl(sigBweheniUrl),
   ])
   const complianceStripPieces = await cropStripPieces(complianceStrip)
-  return { logoDark, complianceStrip, complianceStripPieces, gradientBar, sigSanchez, sigLaconsay, sigBweheni }
+  return { logoDark, complianceStrip, complianceStripPieces, gradientBar, reco2Stamp, sigSanchez, sigLaconsay, sigBweheni }
 }

@@ -4,6 +4,7 @@
 // code — useful for Node-based testing of the drawing logic.
 export const REPORT_ASSET_DIMENSIONS = {
   logoDark: { width: 839, height: 148 },
+  reco2Stamp: { width: 628, height: 632 },
   complianceStrip: { width: 1074, height: 136 },
   gradientBar: { width: 1120, height: 21 },
 }

@@ -30,7 +30,7 @@ import { ASSET_DIMENSIONS } from '../certificate/assetDimensions.js'
 import { METHODOLOGY_SECTIONS, CONCLUSION_PARAGRAPHS } from './methodology.js'
 import { resolveReportText } from './reportText.js'
 import { wrapRich, drawRichLines } from './richText.js'
-import { LETTERHEAD_ID, GRADIENT_BAR_ID, REPORT_COMPLIANCE_LOGOS, reportStripLogoBoxes } from './reportBuiltInImages.js'
+import { LETTERHEAD_ID, GRADIENT_BAR_ID, STAMP_ID, REPORT_COMPLIANCE_LOGOS, reportStripLogoBoxes } from './reportBuiltInImages.js'
 
 const PAGE_W = 210
 const PAGE_H = 297
@@ -337,12 +337,29 @@ const SIGNATURE_OFFSETS = {
   sigBweheni: { dx: 13.5, drop: 12.3 },
 }
 const SIGN_COLUMNS = [53.6, 113.2, 162.4] // name-block centers, from the reference
+// The RECO2 stamp behind the reviewer (2nd signatory), placed as in the
+// reference: 41.5mm wide, its top 4.1mm under the role labels' baseline, its
+// center 9.9mm left of the reviewer's name.
+const STAMP = { column: 1, w: 41.54, top: 4.1, dx: -9.9 }
 
 function drawSignOff(flow, assets, T, showSignatures) {
   const { doc } = flow
-  place(flow, 'signoff', 24)
+  const stamp = !hidden.has(STAMP_ID) && assets?.reco2Stamp
+  const stampH = STAMP.w * (REPORT_ASSET_DIMENSIONS.reco2Stamp.height / REPORT_ASSET_DIMENSIONS.reco2Stamp.width)
+  // Keep the whole block on one page. The stamp may reach down into the gap
+  // above the footer logos (they start at STRIP.y), so it only needs that much room.
+  const namesHeight = 24
+  place(flow, 'signoff', stamp ? Math.max(namesHeight, STAMP.top + stampH - (STRIP.y - 1.5 - BOTTOM)) : namesHeight)
   const labelY = flow.y
   const nameY = labelY + 19
+
+  // Stamp first, so the name and signature sit on top of it.
+  if (stamp) {
+    const box = { x: SIGN_COLUMNS[STAMP.column] + STAMP.dx - STAMP.w / 2, y: labelY + STAMP.top, w: STAMP.w, h: stampH }
+    doc.addImage(assets.reco2Stamp, 'PNG', box.x, box.y, box.w, box.h, 'reco2Stamp', 'FAST')
+    builtInBoxes.push({ id: STAMP_ID, name: 'RECO2 stamp', page: doc.getCurrentPageInfo().pageNumber - 1, ...box, movable: true })
+  }
+
   SIGNATORIES.forEach((sig, i) => {
     const cx = SIGN_COLUMNS[i]
     doc.setTextColor(...BLACK)
