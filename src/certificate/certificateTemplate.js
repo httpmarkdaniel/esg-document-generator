@@ -144,7 +144,7 @@ function drawRecipientBlock(doc, T, y) {
 }
 
 /** Given-date line, signature row, disclaimer, compliance-logo strip, and bottom accent bar. Shared by all types. */
-function drawFooter(doc, assets, T) {
+function drawFooter(doc, assets, T, { showSignatures }) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
 
@@ -160,8 +160,11 @@ function drawFooter(doc, assets, T) {
   // Signature row
   y = pageHeight - 44
   const colWidth = (pageWidth - MARGIN * 2) / SIGNATORIES.length
-  SIGNATORIES.forEach((_, i) => {
+  SIGNATORIES.forEach((sig, i) => {
     const cx = MARGIN + colWidth * i + colWidth / 2
+    // A person's pen signature only goes above their OWN name: if the name
+    // was edited to someone else, the signature is left off.
+    if (showSignatures && sig.signature && T[`sig${i}Name`] === sig.name) drawSignature(doc, assets, sig.signature, cx, y - 5)
     doc.setDrawColor(...BRAND.border)
     doc.setLineWidth(0.2)
     doc.line(cx - 28, y - 5, cx + 28, y - 5)
@@ -191,6 +194,23 @@ function drawFooter(doc, assets, T) {
   // vector rect (3.6mm tall, not the page's full corner-to-corner margin).
   doc.setFillColor(...BRAND.lime)
   doc.rect(0, pageHeight - 3.6, pageWidth, 3.6, 'F')
+}
+
+// One shared scale for all 3 signature images (mm per image pixel), so they
+// keep the same sizes relative to each other as on the signed original —
+// the tallest (Sanchez / Bweheni) come out ~13mm tall.
+const SIGNATURE_MM_PER_PX = 13 / 249
+// Share of the signature's height that dips below the signature line, like a real pen signature.
+const SIGNATURE_LINE_OVERLAP = 0.18
+
+/** Draw a signature image centered on `cx`, sitting on the signature line at `lineY`. */
+function drawSignature(doc, assets, key, cx, lineY) {
+  const image = assets?.[key]
+  if (!image) return
+  const dim = ASSET_DIMENSIONS[key]
+  const w = dim.width * SIGNATURE_MM_PER_PX
+  const h = dim.height * SIGNATURE_MM_PER_PX
+  doc.addImage(image, 'PNG', cx - w / 2, lineY + h * SIGNATURE_LINE_OVERLAP - h, w, h)
 }
 
 const STAT_TILE_LABEL_SIZE = 9
@@ -281,7 +301,7 @@ function drawPanel(doc, assets, x, y, w, h, title, tiles) {
 // ---------------------------------------------------------------------------
 // Environmental Impact Certificate (EIC)
 // ---------------------------------------------------------------------------
-function drawEnvironmentalImpactCertificate(doc, assets, T) {
+function drawEnvironmentalImpactCertificate(doc, assets, T, options) {
   let y = drawHeader(doc, assets, T)
   y = drawRecipientBlock(doc, T, y)
 
@@ -308,13 +328,13 @@ function drawEnvironmentalImpactCertificate(doc, assets, T) {
     drawPanel(doc, assets, MARGIN + panelW + gap, panelY, panelW, panelH, T.savingsTitle, savingsTiles)
   }
 
-  drawFooter(doc, assets, T)
+  drawFooter(doc, assets, T, options)
 }
 
 // ---------------------------------------------------------------------------
 // Carbon Abatement Certificate (CAC)
 // ---------------------------------------------------------------------------
-function drawCarbonAbatementCertificate(doc, assets, T) {
+function drawCarbonAbatementCertificate(doc, assets, T, options) {
   let y = drawHeader(doc, assets, T)
   y = drawRecipientBlock(doc, T, y)
 
@@ -341,13 +361,13 @@ function drawCarbonAbatementCertificate(doc, assets, T) {
     drawStatTile(doc, assets, MARGIN + tileW * col, y + row * 20, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon)
   })
 
-  drawFooter(doc, assets, T)
+  drawFooter(doc, assets, T, options)
 }
 
 // ---------------------------------------------------------------------------
 // Landfill Diverted Certificate (LDC)
 // ---------------------------------------------------------------------------
-function drawLandfillDivertedCertificate(doc, assets, T) {
+function drawLandfillDivertedCertificate(doc, assets, T, options) {
   let y = drawHeader(doc, assets, T)
   y = drawRecipientBlock(doc, T, y)
 
@@ -382,13 +402,13 @@ function drawLandfillDivertedCertificate(doc, assets, T) {
     })
   }
 
-  drawFooter(doc, assets, T)
+  drawFooter(doc, assets, T, options)
 }
 
 // ---------------------------------------------------------------------------
 // Recycled Plastics Certificate (RPC)
 // ---------------------------------------------------------------------------
-function drawRecycledPlasticsCertificate(doc, assets, T) {
+function drawRecycledPlasticsCertificate(doc, assets, T, options) {
   let y = drawHeader(doc, assets, T)
   y = drawRecipientBlock(doc, T, y)
 
@@ -404,7 +424,7 @@ function drawRecycledPlasticsCertificate(doc, assets, T) {
     drawSimpleStatBlock(doc, MARGIN + blockW * i + blockW / 2, y + 12, block.label, block.value)
   })
 
-  drawFooter(doc, assets, T)
+  drawFooter(doc, assets, T, options)
 }
 
 const DRAWERS = {
@@ -422,5 +442,5 @@ const DRAWERS = {
  */
 export function drawCertificate(doc, assets, data) {
   const drawer = DRAWERS[data.certificateType] || DRAWERS.EIC
-  drawer(doc, assets, resolveCertificateText(data))
+  drawer(doc, assets, resolveCertificateText(data), { showSignatures: !data.textOverrides?.hideSignatures })
 }

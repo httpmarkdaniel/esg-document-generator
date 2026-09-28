@@ -14,7 +14,7 @@ const PREVIEW_DEBOUNCE_MS = 350
  * typing replaces a line, clearing it hides the line, Reset restores the
  * auto text.
  */
-export function CertificatePreviewEditor({ data, overrides, onOverridesChange }) {
+export function CertificatePreviewEditor({ data, overrides, onOverridesChange, actions }) {
   const [pdfUrl, setPdfUrl] = useState(null)
   const [rendering, setRendering] = useState(false)
   const [renderError, setRenderError] = useState(null)
@@ -59,12 +59,19 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange })
     }
     return [...bySection.entries()]
   }, [fields])
-  const editedCount = fields.filter((f) => f.key in overrides).length
+  const editedCount = fields.filter((f) => f.key in overrides).length + (overrides.hideSignatures ? 1 : 0)
 
   function setText(key, value, defaultValue) {
     const next = { ...overrides }
     if (value === defaultValue) delete next[key]
     else next[key] = value
+    onOverridesChange(next)
+  }
+
+  function setShowSignatures(show) {
+    const next = { ...overrides }
+    if (show) delete next.hideSignatures
+    else next.hideSignatures = true
     onOverridesChange(next)
   }
 
@@ -76,6 +83,7 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange })
 
   return (
     <Card title="Certificate Preview" subtitle="This is the exact PDF that gets generated — it updates as you change the form.">
+      {actions && <div className="mb-4 border-b border-gray-100 pb-4">{actions}</div>}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-gray-500">
           {rendering ? 'Updating preview…' : renderError || 'Up to date'}
@@ -118,6 +126,18 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange })
             {sections.map(([section, sectionFields]) => (
               <div key={section} className="mb-4 last:mb-0">
                 <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-green">{section}</div>
+                {section === 'Signatories' && (
+                  <label className="mb-2.5 flex cursor-pointer items-center gap-2 text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={!overrides.hideSignatures}
+                      onChange={(e) => setShowSignatures(e.target.checked)}
+                      className="h-4 w-4 accent-brand-green"
+                    />
+                    Show e-signatures
+                    <span className="text-[11px] text-gray-400">(only above each person's own name)</span>
+                  </label>
+                )}
                 <div className="flex flex-col gap-2.5">
                   {sectionFields.map((f) => {
                     const edited = f.key in overrides

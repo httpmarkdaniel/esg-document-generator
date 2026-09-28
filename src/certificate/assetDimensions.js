@@ -19,4 +19,7 @@ export const ASSET_DIMENSIONS = {
   iconCar: { width: 320, height: 317 },
   iconLandfill: { width: 320, height: 317 },
   iconWater: { width: 320, height: 317 },
+  sigSanchez: { width: 231, height: 246 },
+  sigLaconsay: { width: 453, height: 114 },
+  sigBweheni: { width: 285, height: 249 },
 }

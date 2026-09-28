@@ -28,9 +28,9 @@ export const BRAND = {
 
 // Fixed signatories shown on every certificate and the Word report.
 export const SIGNATORIES = [
-  { name: 'Engr. Wilssie Sanchez', title: 'COMMERCIAL & SUSTAINABILITY ENGINEER' },
-  { name: 'Melinda Laconsay', title: 'COMPLIANCE & SUSTAINABILITY MANAGER' },
-  { name: 'Timothy Bweheni', title: 'GENERAL MANAGER' },
+  { name: 'Engr. Wilssie Sanchez', title: 'COMMERCIAL & SUSTAINABILITY ENGINEER', signature: 'sigSanchez' },
+  { name: 'Melinda Laconsay', title: 'COMPLIANCE & SUSTAINABILITY MANAGER', signature: 'sigLaconsay' },
+  { name: 'Timothy Bweheni', title: 'GENERAL MANAGER', signature: 'sigBweheni' },
 ]
 
 export const CERTIFICATE_TYPES = {

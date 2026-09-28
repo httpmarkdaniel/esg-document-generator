@@ -337,25 +337,24 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
 
       </div>
 
-      <CertificatePreviewEditor data={certificateData} overrides={textOverrides} onOverridesChange={setTextOverrides} />
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        {!hideActions && (
-          <Card className="lg:col-start-2">
-            <div className="flex flex-col gap-3">
-              {status && <Banner tone={status.tone}>{status.message}</Banner>}
-              <PrimaryButton type="button" onClick={handleGenerate} loading={generating}>
-                {generating ? 'Generating…' : 'Generate PDF Certificate'}
-              </PrimaryButton>
+      {/* Status + Generate sit right above the certificate preview, so they're seen before generating. */}
+      <CertificatePreviewEditor
+        data={certificateData}
+        overrides={textOverrides}
+        onOverridesChange={setTextOverrides}
+        actions={
+          (status || !hideActions) && (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <div className="flex-1">{status && <Banner tone={status.tone}>{status.message}</Banner>}</div>
+              {!hideActions && (
+                <PrimaryButton type="button" onClick={handleGenerate} loading={generating} className="shrink-0 sm:w-64">
+                  {generating ? 'Generating…' : 'Generate PDF Certificate'}
+                </PrimaryButton>
+              )}
             </div>
-          </Card>
-        )}
-        {hideActions && status && (
-          <Card className="lg:col-start-2">
-            <Banner tone={status.tone}>{status.message}</Banner>
-          </Card>
-        )}
-      </div>
+          )
+        }
+      />
     </div>
   )
 })
