@@ -108,18 +108,18 @@ function splitAddress(address) {
   if (!clean) return ['', '', '']
   const lines = clean.split('\n').map((l) => l.trim().replace(/,$/, '')).filter(Boolean)
   if (lines.length >= 3) return [lines[0], lines.slice(1, -1).join(', '), lines[lines.length - 1]]
+  // The sheet's line break is often mid-phrase ("…Special Economic\nZone, Biñan"),
+  // so treat it as a space and split by commas instead.
+  const flat = clean.replace(/\s*\n\s*/g, ' ').replace(/\s+,/g, ',')
   let rest
   let city
-  if (lines.length === 2) [rest, city] = lines
-  else {
-    const parts = clean.split(',').map((p) => p.trim()).filter(Boolean)
-    if (parts.length >= 2) {
-      city = parts.pop()
-      rest = parts.join(', ')
-    } else {
-      const m = clean.match(/^(.*\S)\s+((?:CITY OF\s+)?\S+\s+CITY(?:\s+\d{4})?(?:\s+\S+)?)$/i)
-      ;[rest, city] = m ? [m[1], m[2]] : [clean, '']
-    }
+  const parts = flat.split(',').map((p) => p.trim()).filter(Boolean)
+  if (parts.length >= 2) {
+    city = parts.pop()
+    rest = parts.join(', ')
+  } else {
+    const m = flat.match(/^(.*\S)\s+((?:CITY OF\s+)?\S+\s+CITY(?:\s+\d{4})?(?:\s+\S+)?)$/i)
+    ;[rest, city] = m ? [m[1], m[2]] : [flat, '']
   }
   const [line1, line2] = splitInTwo(rest)
   return [line1, line2, city]

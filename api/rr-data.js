@@ -54,15 +54,27 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : 0
 }
 
-/** "1/29/26" or "09/11/2026" -> "2026-01-29" (ISO), or null if unparsable. */
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
+const fullYear = (y) => (String(y).length === 2 ? 2000 + Number(y) : Number(y))
+const iso = (year, month, day) =>
+  month >= 1 && month <= 12 && day >= 1 && day <= 31 ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` : null
+
+/**
+ * The sheet's RECEIVED DATE -> "2026-01-29" (ISO), or null if unparsable.
+ * Handles the formats actually typed in the sheet: "1/29/26", "09/11/2026",
+ * "1/12//2026" (doubled slash), "September 28, 2026", "4-Aug-26".
+ */
 function toIsoDate(value) {
-  const m = String(value || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/)
-  if (!m) return null
-  const [, mo, d, yRaw] = m
-  const year = yRaw.length === 2 ? 2000 + Number(yRaw) : Number(yRaw)
-  const month = String(mo).padStart(2, '0')
-  const day = String(d).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const v = String(value || '').trim()
+  let m = v.match(/^(\d{1,2})\/+(\d{1,2})\/+(\d{2}|\d{4})$/)
+  if (m) return iso(fullYear(m[3]), Number(m[1]), Number(m[2]))
+  m = v.match(/^([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})$/)
+  if (m && MONTHS[m[1].slice(0, 3).toLowerCase()]) return iso(Number(m[3]), MONTHS[m[1].slice(0, 3).toLowerCase()], Number(m[2]))
+  m = v.match(/^(\d{1,2})[-\s]([A-Za-z]{3,})[-\s,]+(\d{2}|\d{4})$/)
+  if (m && MONTHS[m[2].slice(0, 3).toLowerCase()]) return iso(fullYear(m[3]), MONTHS[m[2].slice(0, 3).toLowerCase()], Number(m[1]))
+  m = v.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return iso(Number(m[1]), Number(m[2]), Number(m[3]))
+  return null
 }
 
 let cache = null
