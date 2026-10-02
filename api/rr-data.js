@@ -77,6 +77,22 @@ function toIsoDate(value) {
   return null
 }
 
+/** The sheet export occasionally drops the connection mid-download ("terminated") — retry a couple of times. */
+async function fetchCsvWithRetry(attempts = 3) {
+  let lastError
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(CSV_URL)
+      if (!res.ok) throw new Error(`Sheet fetch failed: HTTP ${res.status}`)
+      return await res.text()
+    } catch (err) {
+      lastError = err
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)))
+    }
+  }
+  throw lastError
+}
+
 let cache = null
 let cacheFetchedAt = 0
 const CACHE_MS = 5 * 60 * 1000
@@ -85,9 +101,7 @@ async function loadItems() {
   const now = Date.now()
   if (cache && now - cacheFetchedAt < CACHE_MS) return cache
 
-  const csvRes = await fetch(CSV_URL)
-  if (!csvRes.ok) throw new Error(`Sheet fetch failed: HTTP ${csvRes.status}`)
-  const csvText = await csvRes.text()
+  const csvText = await fetchCsvWithRetry()
 
   const { data: rows } = Papa.parse(csvText, { skipEmptyLines: true })
   const headerRowIndex = rows.findIndex((r) => r.includes('REFERENCE NO.'))

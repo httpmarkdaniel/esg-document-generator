@@ -3,12 +3,14 @@ import { Tabs } from '../components/Tabs.jsx'
 import { CalculatorPanel } from '../components/CalculatorPanel.jsx'
 import { CertificateGenerator } from '../components/CertificateGenerator.jsx'
 import { ReportGenerator } from '../components/ReportGenerator.jsx'
+import { DashboardPanel } from '../components/DashboardPanel.jsx'
 import logoUrl from '../assets/certificate/logo.png'
 
 const TABS = [
   { id: 'calculator', label: 'Impact Calculator' },
   { id: 'certificate', label: 'Certificate' },
   { id: 'report', label: 'ESG Report' },
+  { id: 'dashboard', label: 'Dashboard' },
 ]
 
 export function ESGDocumentsPage() {
@@ -52,7 +54,7 @@ export function ESGDocumentsPage() {
           </p>
         </header>
 
-        <div className="mb-6 max-w-lg">
+        <div className="mb-6 max-w-2xl">
           <Tabs tabs={TABS} active={active} onChange={setActive} />
         </div>
 
@@ -67,6 +69,8 @@ export function ESGDocumentsPage() {
         )}
 
         {active === 'report' && <ReportGenerator rowToAdd={reportRowToAdd} onRowConsumed={() => setReportRowToAdd(null)} />}
+
+        {active === 'dashboard' && <DashboardPanel />}
       </div>
     </div>
   )

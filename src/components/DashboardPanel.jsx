@@ -1,0 +1,262 @@
+import { useEffect, useMemo, useState } from 'react'
+import { Card, GhostButton } from './Card.jsx'
+import { FormField, TextInput } from './FormField.jsx'
+import { getAllRrSummaries } from '../rrData/rrClient.js'
+import { normalizeCertificateData } from '../certificate/certificateData.js'
+import { formatNumber, todayIso } from '../lib/format.js'
+
+/**
+ * Per-client totals of what the certificates would print, for every RR
+ * received in the chosen period. Each client's RRs are combined exactly the
+ * way the Certificate tab combines ticked RRs (summed net weight and material
+ * breakdown), then run through the same normalizeCertificateData the
+ * certificates use — so every figure here matches a certificate generated for
+ * that client and period.
+ */
+
+// [key, header, value from the normalized certificate data, decimals]
+const GROUPS = [
+  {
+    title: 'Environmental Impact Certificate',
+    color: 'bg-emerald-50 text-emerald-800',
+    columns: [
+      ['eicCarbon', 'Carbon Saved (kg CO2e)', (d) => d.netCarbonAbatedKgCO2e, 2],
+      ['eicLandfill', 'Landfill Diverted (kg)', (d) => d.landfillDivertedKg, 2],
+      ['eicPlastic', 'Plastic Recycled (kg)', (d) => d.plasticRecycledKg, 2],
+    ],
+  },
+  {
+    title: 'Carbon Abatement Certificate',
+    color: 'bg-sky-50 text-sky-800',
+    columns: [
+      ['cacCollected', 'Materials Collected (kg)', (d) => d.materialsCollectedKg, 2],
+      ['cacFootprint', 'Total Carbon Footprint (kg CO2e)', (d) => d.totalCarbonFootprintKgCO2e, 2],
+      ['cacAbated', 'Net Carbon Abated (tCO2e)', (d) => d.netCarbonAbatedKgCO2e / 1000, 2],
+      ['cacRecycled', 'Recycled Emissions (kg CO2e)', (d) => d.recycledEmissionsKgCO2e, 2],
+      ['cacKm', 'Carbon Benefits Equivalent (km avoided)', (d) => d.kmAvoided, 0],
+    ],
+  },
+  {
+    title: 'Landfill Diverted Certificate',
+    color: 'bg-lime-50 text-lime-800',
+    columns: [
+      ['ldcCollected', 'Materials Collected (kg)', (d) => d.materialsCollectedKg, 2],
+      ['ldcLandfill', 'Landfill Diverted (kg)', (d) => d.landfillDivertedKg, 2],
+    ],
+  },
+]
+const COLUMNS = GROUPS.flatMap((g) => g.columns)
+
+/** One client's (or the total's) certificate figures from its RRs, same as a certificate combining those RRs. */
+function figuresFor(summaries) {
+  const sum = (fn) => summaries.reduce((s, r) => s + fn(r), 0)
+  const totalNetWeight = sum((r) => r.totalNetWeight)
+  const data = normalizeCertificateData({
+    certificateType: 'EIC',
+    materialsCollectedKg: totalNetWeight,
+    landfillDivertedKg: totalNetWeight,
+    materials: {
+      metalKg: sum((r) => r.materialsKg.metalKg),
+      plasticKg: sum((r) => r.materialsKg.plasticKg),
+      glassKg: sum((r) => r.materialsKg.glassKg),
+      electronicsKg: sum((r) => r.materialsKg.electronicsKg),
+    },
+  })
+  return Object.fromEntries(COLUMNS.map(([key, , get]) => [key, get(data)]))
+}
+
+const iso = (d) => d.toISOString().slice(0, 10)
+const PRESETS = [
+  ['This month', () => { const t = new Date(); return [iso(new Date(t.getFullYear(), t.getMonth(), 1, 12)), todayIso()] }],
+  ['Last month', () => { const t = new Date(); return [iso(new Date(t.getFullYear(), t.getMonth() - 1, 1, 12)), iso(new Date(t.getFullYear(), t.getMonth(), 0, 12))] }],
+  ['This year', () => [`${new Date().getFullYear()}-01-01`, todayIso()]],
+  ['Last year', () => { const y = new Date().getFullYear() - 1; return [`${y}-01-01`, `${y}-12-31`] }],
+  ['All time', () => ['', '']],
+]
+
+export function DashboardPanel() {
+  const [all, setAll] = useState(null)
+  const [error, setError] = useState(null)
+  const [[from, to], setRange] = useState(PRESETS[2][1]())
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState({ key: 'cacCollected', dir: 'desc' })
+
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    setError(null)
+    getAllRrSummaries()
+      .then(setAll)
+      .catch((err) => setError(err.message || 'Could not load the Receiving Reports.'))
+  }, [attempt])
+
+  const inPeriod = useMemo(
+    () => (all || []).filter((s) => (!from || (s.receivedDateIso && s.receivedDateIso >= from)) && (!to || (s.receivedDateIso && s.receivedDateIso <= to))),
+    [all, from, to],
+  )
+
+  const rows = useMemo(() => {
+    const byClient = new Map()
+    for (const s of inPeriod) {
+      const name = (s.accountName || s.companyName || 'Unnamed client').trim()
+      const key = name.toLowerCase()
+      if (!byClient.has(key)) byClient.set(key, { client: name, summaries: [] })
+      byClient.get(key).summaries.push(s)
+    }
+    const q = search.trim().toLowerCase()
+    const list = [...byClient.values()]
+      .filter((c) => !q || c.client.toLowerCase().includes(q))
+      .map((c) => {
+        const dates = c.summaries.map((s) => s.receivedDateIso).filter(Boolean).sort()
+        return { client: c.client, rrCount: c.summaries.length, firstRr: dates[0], lastRr: dates[dates.length - 1], summaries: c.summaries, ...figuresFor(c.summaries) }
+      })
+    const dir = sort.dir === 'asc' ? 1 : -1
+    list.sort((a, b) => (sort.key === 'client' ? a.client.localeCompare(b.client) * dir : ((a[sort.key] ?? 0) - (b[sort.key] ?? 0)) * dir))
+    return list
+  }, [inPeriod, search, sort])
+
+  const totals = useMemo(() => figuresFor(rows.flatMap((r) => r.summaries)), [rows])
+  const totalRrs = rows.reduce((s, r) => s + r.rrCount, 0)
+  const uncoveredKg = rows.flatMap((r) => r.summaries).reduce((s, r) => s + (r.totalNetWeight - r.materialsMatchedNetWeight), 0)
+
+  function toggleSort(key) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: key === 'client' ? 'asc' : 'desc' }))
+  }
+
+  function exportCsv() {
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const header = ['Client', 'RRs', ...GROUPS.flatMap((g) => g.columns.map(([, label]) => `${g.title} - ${label}`))]
+    const line = (r, name) => [name, r.rrCount, ...COLUMNS.map(([key, , , dec]) => (r[key] ?? 0).toFixed(dec))]
+    const csv = [header, ...rows.map((r) => line(r, r.client)), line({ ...totals, rrCount: totalRrs }, 'TOTAL')].map((r) => r.map(esc).join(',')).join('\n')
+    const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `ESG Certificate Summary by Client (${from || 'all'} to ${to || 'today'}).csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const th = 'px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 whitespace-nowrap cursor-pointer select-none hover:text-brand-green-dark'
+  const arrow = (key) => (sort.key === key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : '')
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card
+        title="Certificate Summary by Client"
+        subtitle="What the Environmental Impact, Carbon Abatement and Landfill Diverted certificates add up to per client, for every RR received in the period — the same figures a certificate for that client and period would print."
+      >
+        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1.4fr]">
+          <FormField label="Received from">
+            <TextInput type="date" value={from} onChange={(e) => setRange([e.target.value, to])} />
+          </FormField>
+          <FormField label="Received to">
+            <TextInput type="date" value={to} onChange={(e) => setRange([from, e.target.value])} />
+          </FormField>
+          <FormField label="Search client">
+            <TextInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Client / account name" />
+          </FormField>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {PRESETS.map(([label, range]) => (
+            <GhostButton key={label} type="button" onClick={() => setRange(range())}>
+              {label}
+            </GhostButton>
+          ))}
+          <div className="flex-1" />
+          <GhostButton type="button" onClick={exportCsv} disabled={!rows.length}>
+            ⬇ Export CSV
+          </GhostButton>
+        </div>
+      </Card>
+
+      <Card
+        title={all ? `${rows.length} client(s) · ${totalRrs} RR(s)` : 'Loading Receiving Reports…'}
+        subtitle={
+          all
+            ? `Period: ${from || 'all RRs'} to ${to || 'today'}. Click a column to sort.${uncoveredKg > 0.005 ? ` Carbon/plastic figures only cover item types in the material split catalog (${formatNumber(uncoveredKg)} kg of the weight isn't in it).` : ''}`
+            : undefined
+        }
+      >
+        {error && (
+          <div className="flex items-center gap-3 text-sm text-red-600">
+            Couldn't load the Receiving Reports ({error}).
+            <GhostButton type="button" onClick={() => setAttempt((n) => n + 1)}>
+              Retry
+            </GhostButton>
+          </div>
+        )}
+        {!all && !error && <p className="py-10 text-center text-sm text-gray-400">Loading…</p>}
+        {all && (
+          <div className="max-h-[70vh] overflow-auto rounded-lg border border-gray-100">
+            <table className="w-full min-w-[1300px] border-collapse text-sm">
+              <thead className="sticky top-0 z-10 bg-white">
+                <tr>
+                  <th className="border-b border-gray-100" colSpan={2} />
+                  {GROUPS.map((g) => (
+                    <th key={g.title} colSpan={g.columns.length} className={`border-b border-l border-gray-100 px-2 py-1.5 text-center text-[11px] font-bold uppercase tracking-wide ${g.color}`}>
+                      {g.title}
+                    </th>
+                  ))}
+                </tr>
+                <tr className="border-b border-gray-200 text-left">
+                  <th className={th} onClick={() => toggleSort('client')}>Client{arrow('client')}</th>
+                  <th className={`${th} text-right`} onClick={() => toggleSort('rrCount')}>RRs{arrow('rrCount')}</th>
+                  {GROUPS.map((g) =>
+                    g.columns.map(([key, label], i) => (
+                      <th key={key} className={`${th} text-right ${i === 0 ? 'border-l border-gray-100' : ''}`} onClick={() => toggleSort(key)}>
+                        {label}
+                        {arrow(key)}
+                      </th>
+                    )),
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={2 + COLUMNS.length} className="py-10 text-center text-sm text-gray-400">
+                      No RRs received in this period{search ? ' for that client' : ''}.
+                    </td>
+                  </tr>
+                )}
+                {rows.map((r) => (
+                  <tr key={r.client} className="border-b border-gray-50 hover:bg-gray-50/70">
+                    <td className="px-2 py-1.5 font-medium text-gray-800">
+                      {r.client}
+                      <div className="text-[11px] font-normal text-gray-400">
+                        {r.firstRr === r.lastRr ? r.firstRr : `${r.firstRr} – ${r.lastRr}`}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-gray-600">{r.rrCount}</td>
+                    {GROUPS.map((g) =>
+                      g.columns.map(([key, , , dec], i) => (
+                        <td key={key} className={`px-2 py-1.5 text-right tabular-nums text-gray-700 ${i === 0 ? 'border-l border-gray-100' : ''}`}>
+                          {formatNumber(r[key], dec)}
+                        </td>
+                      )),
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+              {rows.length > 0 && (
+                <tfoot className="sticky bottom-0 bg-brand-green-light">
+                  <tr className="font-semibold text-brand-green-dark">
+                    <td className="px-2 py-2">Total</td>
+                    <td className="px-2 py-2 text-right">{totalRrs}</td>
+                    {GROUPS.map((g) =>
+                      g.columns.map(([key, , , dec], i) => (
+                        <td key={key} className={`px-2 py-2 text-right tabular-nums ${i === 0 ? 'border-l border-brand-green/10' : ''}`}>
+                          {formatNumber(totals[key], dec)}
+                        </td>
+                      )),
+                    )}
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  )
+}
