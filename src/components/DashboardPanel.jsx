@@ -17,6 +17,7 @@ import { formatNumber, todayIso } from '../lib/format.js'
 // [key, header, value from the normalized certificate data, decimals]
 const GROUPS = [
   {
+    id: 'EIC',
     title: 'Environmental Impact Certificate',
     color: 'bg-emerald-50 text-emerald-800',
     columns: [
@@ -26,6 +27,7 @@ const GROUPS = [
     ],
   },
   {
+    id: 'CAC',
     title: 'Carbon Abatement Certificate',
     color: 'bg-sky-50 text-sky-800',
     columns: [
@@ -37,6 +39,7 @@ const GROUPS = [
     ],
   },
   {
+    id: 'LDC',
     title: 'Landfill Diverted Certificate',
     color: 'bg-lime-50 text-lime-800',
     columns: [
@@ -80,6 +83,16 @@ export function DashboardPanel() {
   const [[from, to], setRange] = useState(PRESETS[2][1]())
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState({ key: 'cacCollected', dir: 'desc' })
+  const [cert, setCert] = useState('ALL')
+  const groups = cert === 'ALL' ? GROUPS : GROUPS.filter((g) => g.id === cert)
+  const columns = groups.flatMap((g) => g.columns)
+
+  function pickCert(id) {
+    setCert(id)
+    // Keep sorting on a column that is still shown.
+    const shown = (id === 'ALL' ? GROUPS : GROUPS.filter((g) => g.id === id)).flatMap((g) => g.columns.map(([k]) => k))
+    setSort((s) => (s.key === 'client' || s.key === 'rrCount' || shown.includes(s.key) ? s : { key: shown[0], dir: 'desc' }))
+  }
 
   const [attempt, setAttempt] = useState(0)
 
@@ -125,18 +138,18 @@ export function DashboardPanel() {
 
   function exportCsv() {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const header = ['Client', 'RRs', ...GROUPS.flatMap((g) => g.columns.map(([, label]) => `${g.title} - ${label}`))]
-    const line = (r, name) => [name, r.rrCount, ...COLUMNS.map(([key, , , dec]) => (r[key] ?? 0).toFixed(dec))]
+    const header = ['Client', 'RRs', ...groups.flatMap((g) => g.columns.map(([, label]) => `${g.title} - ${label}`))]
+    const line = (r, name) => [name, r.rrCount, ...columns.map(([key, , , dec]) => (r[key] ?? 0).toFixed(dec))]
     const csv = [header, ...rows.map((r) => line(r, r.client)), line({ ...totals, rrCount: totalRrs }, 'TOTAL')].map((r) => r.map(esc).join(',')).join('\n')
     const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `ESG Certificate Summary by Client (${from || 'all'} to ${to || 'today'}).csv`
+    a.download = `ESG Certificate Summary by Client${cert === 'ALL' ? '' : ` - ${cert}`} (${from || 'all'} to ${to || 'today'}).csv`
     a.click()
     URL.revokeObjectURL(a.href)
   }
 
-  const th = 'px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 whitespace-nowrap cursor-pointer select-none hover:text-brand-green-dark'
+  const th = 'px-1.5 py-2 align-bottom text-[10px] font-semibold uppercase leading-tight tracking-wide text-gray-500 cursor-pointer select-none hover:text-brand-green-dark'
   const arrow = (key) => (sort.key === key ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : '')
 
   return (
@@ -145,7 +158,17 @@ export function DashboardPanel() {
         title="Certificate Summary by Client"
         subtitle="What the Environmental Impact, Carbon Abatement and Landfill Diverted certificates add up to per client, for every RR received in the period — the same figures a certificate for that client and period would print."
       >
-        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1.4fr]">
+        <div className="grid gap-3 sm:grid-cols-[1.3fr_1fr_1fr_1.4fr]">
+          <FormField label="Certificate">
+            <select value={cert} onChange={(e) => pickCert(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 focus:border-brand-green focus:outline-none focus:ring-2 focus:ring-brand-green/20">
+              <option value="ALL">All 3 certificates</option>
+              {GROUPS.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.title}
+                </option>
+              ))}
+            </select>
+          </FormField>
           <FormField label="Received from">
             <TextInput type="date" value={from} onChange={(e) => setRange([e.target.value, to])} />
           </FormField>
@@ -188,20 +211,20 @@ export function DashboardPanel() {
         {!all && !error && <p className="py-10 text-center text-sm text-gray-400">Loading…</p>}
         {all && (
           <div className="max-h-[70vh] overflow-auto rounded-lg border border-gray-100">
-            <table className="w-full min-w-[1300px] border-collapse text-sm">
+            <table className="w-full border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-white">
                 <tr>
                   <th className="border-b border-gray-100" colSpan={2} />
-                  {GROUPS.map((g) => (
+                  {groups.map((g) => (
                     <th key={g.title} colSpan={g.columns.length} className={`border-b border-l border-gray-100 px-2 py-1.5 text-center text-[11px] font-bold uppercase tracking-wide ${g.color}`}>
                       {g.title}
                     </th>
                   ))}
                 </tr>
                 <tr className="border-b border-gray-200 text-left">
-                  <th className={th} onClick={() => toggleSort('client')}>Client{arrow('client')}</th>
+                  <th className={`${th} w-[16%] text-left`} onClick={() => toggleSort('client')}>Client{arrow('client')}</th>
                   <th className={`${th} text-right`} onClick={() => toggleSort('rrCount')}>RRs{arrow('rrCount')}</th>
-                  {GROUPS.map((g) =>
+                  {groups.map((g) =>
                     g.columns.map(([key, label], i) => (
                       <th key={key} className={`${th} text-right ${i === 0 ? 'border-l border-gray-100' : ''}`} onClick={() => toggleSort(key)}>
                         {label}
@@ -214,23 +237,23 @@ export function DashboardPanel() {
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={2 + COLUMNS.length} className="py-10 text-center text-sm text-gray-400">
+                    <td colSpan={2 + columns.length} className="py-10 text-center text-sm text-gray-400">
                       No RRs received in this period{search ? ' for that client' : ''}.
                     </td>
                   </tr>
                 )}
                 {rows.map((r) => (
                   <tr key={r.client} className="border-b border-gray-50 hover:bg-gray-50/70">
-                    <td className="px-2 py-1.5 font-medium text-gray-800">
+                    <td className="px-1.5 py-1.5 font-medium leading-snug text-gray-800">
                       {r.client}
-                      <div className="text-[11px] font-normal text-gray-400">
+                      <div className="text-[10px] font-normal text-gray-400">
                         {r.firstRr === r.lastRr ? r.firstRr : `${r.firstRr} – ${r.lastRr}`}
                       </div>
                     </td>
-                    <td className="px-2 py-1.5 text-right text-gray-600">{r.rrCount}</td>
-                    {GROUPS.map((g) =>
+                    <td className="px-1.5 py-1.5 text-right text-gray-600">{r.rrCount}</td>
+                    {groups.map((g) =>
                       g.columns.map(([key, , , dec], i) => (
-                        <td key={key} className={`px-2 py-1.5 text-right tabular-nums text-gray-700 ${i === 0 ? 'border-l border-gray-100' : ''}`}>
+                        <td key={key} className={`whitespace-nowrap px-1.5 py-1.5 text-right tabular-nums text-gray-700 ${i === 0 ? 'border-l border-gray-100' : ''}`}>
                           {formatNumber(r[key], dec)}
                         </td>
                       )),
@@ -241,11 +264,11 @@ export function DashboardPanel() {
               {rows.length > 0 && (
                 <tfoot className="sticky bottom-0 bg-brand-green-light">
                   <tr className="font-semibold text-brand-green-dark">
-                    <td className="px-2 py-2">Total</td>
-                    <td className="px-2 py-2 text-right">{totalRrs}</td>
-                    {GROUPS.map((g) =>
+                    <td className="px-1.5 py-2">Total</td>
+                    <td className="px-1.5 py-2 text-right">{totalRrs}</td>
+                    {groups.map((g) =>
                       g.columns.map(([key, , , dec], i) => (
-                        <td key={key} className={`px-2 py-2 text-right tabular-nums ${i === 0 ? 'border-l border-brand-green/10' : ''}`}>
+                        <td key={key} className={`whitespace-nowrap px-1.5 py-2 text-right tabular-nums ${i === 0 ? 'border-l border-brand-green/10' : ''}`}>
                           {formatNumber(totals[key], dec)}
                         </td>
                       )),
