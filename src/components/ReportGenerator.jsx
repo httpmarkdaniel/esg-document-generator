@@ -81,20 +81,48 @@ function collectionRangeLabel(fromIso, toIso) {
   return `${MONTHS[m1 - 1]} ${d1}, ${y1} – ${MONTHS[m2 - 1]} ${d2}, ${y2}`
 }
 
+/** Split text into two lines of similar length: by comma parts if it has commas, else by words. Short text stays on one line. */
+function splitInTwo(text) {
+  const t = text.trim().replace(/,$/, '')
+  if (t.length <= 40) return [t, '']
+  const parts = t.split(',').map((p) => p.trim()).filter(Boolean)
+  const units = parts.length >= 2 ? parts : t.split(/\s+/)
+  const joiner = parts.length >= 2 ? ', ' : ' '
+  let best = 1
+  let bestDiff = Infinity
+  for (let i = 1; i < units.length; i++) {
+    const diff = Math.abs(units.slice(0, i).join(joiner).length - units.slice(i).join(joiner).length)
+    if (diff < bestDiff) [best, bestDiff] = [i, diff]
+  }
+  return [units.slice(0, best).join(joiner), units.slice(best).join(joiner)]
+}
+
 /**
- * The RR's BILLING ADDRESS split into the report's address lines: by line
- * breaks when the sheet has them, else the last comma part is the city line
- * ("7th Floor, Robinsons Cybergate 1, Pioneer St., Mandaluyong City").
+ * The RR's BILLING ADDRESS split into the report's three address lines:
+ * Line 1 / Line 2 (street, building, area — split evenly) and the city line.
+ * The city line is the sheet's last line, else the last comma part, else a
+ * trailing "… CITY [postal]" ("… FORT BONIFACIO | TAGUIG CITY").
  */
 function splitAddress(address) {
-  const clean = String(address || '').replace(/\r/g, '').trim()
+  const clean = String(address || '').replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim()
   if (!clean) return ['', '', '']
   const lines = clean.split('\n').map((l) => l.trim().replace(/,$/, '')).filter(Boolean)
   if (lines.length >= 3) return [lines[0], lines.slice(1, -1).join(', '), lines[lines.length - 1]]
-  if (lines.length === 2) return [lines[0], '', lines[1]]
-  const commas = clean.split(',').map((p) => p.trim()).filter(Boolean)
-  if (commas.length >= 2) return [commas.slice(0, -1).join(', '), '', commas[commas.length - 1]]
-  return [clean, '', '']
+  let rest
+  let city
+  if (lines.length === 2) [rest, city] = lines
+  else {
+    const parts = clean.split(',').map((p) => p.trim()).filter(Boolean)
+    if (parts.length >= 2) {
+      city = parts.pop()
+      rest = parts.join(', ')
+    } else {
+      const m = clean.match(/^(.*\S)\s+((?:CITY OF\s+)?\S+\s+CITY(?:\s+\d{4})?(?:\s+\S+)?)$/i)
+      ;[rest, city] = m ? [m[1], m[2]] : [clean, '']
+    }
+  }
+  const [line1, line2] = splitInTwo(rest)
+  return [line1, line2, city]
 }
 
 const AUTO_DETAIL_KEYS = ['clientName', 'clientAddressLine1', 'clientAddressLine2', 'clientCityStateZipCountry', 'collectionDateRange']
