@@ -67,6 +67,24 @@ function aggregateMaterials(items, catalogEntries) {
   return { materialsKg, matchedNetWeight, matchedItemTypes: [...matchedItemTypes], unmatchedItemTypes: [...unmatchedItemTypes] }
 }
 
+/**
+ * One entry per ITEM TYPE in an RR (e.g. LAPTOP, MONITOR): its net weight and
+ * its own material-catalog breakdown — the ESG report's "Item" rows. Item
+ * types the catalog doesn't cover keep a 0 breakdown and `matched: false`.
+ */
+function itemTypeBreakdown(items, catalogEntries) {
+  const byType = new Map()
+  for (const item of items) {
+    const type = item.itemType || 'Unspecified item'
+    if (!byType.has(type)) byType.set(type, [])
+    byType.get(type).push(item)
+  }
+  return [...byType.entries()].map(([itemType, typeItems]) => {
+    const { materialsKg, matchedNetWeight } = aggregateMaterials(typeItems, catalogEntries)
+    return { itemType, netWeight: typeItems.reduce((s, i) => s + i.netWeight, 0), materialsKg, matched: matchedNetWeight > 0 }
+  })
+}
+
 function summarize(referenceNo, items, catalogEntries) {
   if (!items.length) return null
   const first = items[0]
@@ -95,6 +113,7 @@ function summarize(referenceNo, items, catalogEntries) {
     materialsMatchedFraction: totalNetWeight > 0 ? matchedNetWeight / totalNetWeight : 0,
     matchedItemTypes,
     unmatchedItemTypes,
+    itemTypeRows: itemTypeBreakdown(items, catalogEntries),
     items,
   }
 }

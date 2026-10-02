@@ -34,28 +34,70 @@ function rowFromCalculation({ input, result }, index) {
   }
 }
 
+const MATERIAL_KEYS = ['metalKg', 'plasticKg', 'glassKg', 'electronicsKg']
+const rowKey = (item) => String(item || '').trim().toLowerCase()
+
 /**
- * The RR sheet itself has no material-split data, but the material split
- * catalog (matched by ITEM TYPE, see rrClient.js's aggregateMaterials) may
- * cover some or all of this RR's line items — use whatever it derived.
- * Uncovered item types simply contribute 0, same as before, rather than an
- * invented split.
+ * RRs → "Item" rows: one row per real item (the RR's ITEM TYPE, e.g. LAPTOP,
+ * MONITOR) with its own net weight and material-catalog split (see
+ * rrClient.js's itemTypeBreakdown). The same item across several RRs is
+ * summed into one row — including into an RR row already in the table.
+ * Uncovered item types contribute a 0 split, never an invented one.
+ * Returns the full new rows array.
  */
-function rowFromRrSummary(summary) {
-  return {
-    item: `RR ${summary.referenceNo} — ${summary.accountName}`,
-    qtyKg: kgString(summary.totalNetWeight),
-    metalKg: kgString(summary.materialsKg.metalKg),
-    plasticKg: kgString(summary.materialsKg.plasticKg),
-    glassKg: kgString(summary.materialsKg.glassKg),
-    electronicsKg: kgString(summary.materialsKg.electronicsKg),
-    // Not form fields — carried alongside the row so the table can flag item
-    // types the material catalog didn't cover, and so the same RR is never
-    // added twice. Never sent to the PDF.
-    unmatchedItemTypes: summary.unmatchedItemTypes,
-    rrReferenceNo: summary.referenceNo,
+function mergeRrItemRows(rows, summaries) {
+  const next = rows.map((r) => ({ ...r }))
+  const byItem = new Map(next.filter((r) => r.rrReferenceNos).map((r) => [rowKey(r.item), r]))
+  for (const summary of summaries) {
+    for (const t of summary.itemTypeRows || []) {
+      let row = byItem.get(rowKey(t.itemType))
+      if (!row) {
+        row = { item: t.itemType, qtyKg: '0', metalKg: '0', plasticKg: '0', glassKg: '0', electronicsKg: '0', unmatchedItemTypes: [], rrReferenceNos: [] }
+        next.push(row)
+        byItem.set(rowKey(t.itemType), row)
+      }
+      row.qtyKg = kgString(toNumber(row.qtyKg) + t.netWeight)
+      for (const k of MATERIAL_KEYS) row[k] = kgString(toNumber(row[k]) + t.materialsKg[k])
+      // Not form fields — carried alongside the row so the table can flag item
+      // types the material catalog didn't cover, and so the same RR is never
+      // added twice. Never sent to the PDF.
+      if (!t.matched && !row.unmatchedItemTypes.includes(t.itemType)) row.unmatchedItemTypes = [...row.unmatchedItemTypes, t.itemType]
+      if (!row.rrReferenceNos.includes(summary.referenceNo)) row.rrReferenceNos = [...row.rrReferenceNos, summary.referenceNo]
+    }
   }
+  return next
 }
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+/** "2026-09-25" + "2026-09-30" → "September 25 – 30, 2026" (one date → "September 25, 2026"). */
+function collectionRangeLabel(fromIso, toIso) {
+  const parts = (iso) => iso.split('-').map(Number)
+  const [y1, m1, d1] = parts(fromIso)
+  const [y2, m2, d2] = parts(toIso)
+  if (fromIso === toIso) return `${MONTHS[m1 - 1]} ${d1}, ${y1}`
+  if (y1 === y2 && m1 === m2) return `${MONTHS[m1 - 1]} ${d1} – ${d2}, ${y1}`
+  if (y1 === y2) return `${MONTHS[m1 - 1]} ${d1} – ${MONTHS[m2 - 1]} ${d2}, ${y1}`
+  return `${MONTHS[m1 - 1]} ${d1}, ${y1} – ${MONTHS[m2 - 1]} ${d2}, ${y2}`
+}
+
+/**
+ * The RR's BILLING ADDRESS split into the report's address lines: by line
+ * breaks when the sheet has them, else the last comma part is the city line
+ * ("7th Floor, Robinsons Cybergate 1, Pioneer St., Mandaluyong City").
+ */
+function splitAddress(address) {
+  const clean = String(address || '').replace(/\r/g, '').trim()
+  if (!clean) return ['', '', '']
+  const lines = clean.split('\n').map((l) => l.trim().replace(/,$/, '')).filter(Boolean)
+  if (lines.length >= 3) return [lines[0], lines.slice(1, -1).join(', '), lines[lines.length - 1]]
+  if (lines.length === 2) return [lines[0], '', lines[1]]
+  const commas = clean.split(',').map((p) => p.trim()).filter(Boolean)
+  if (commas.length >= 2) return [commas.slice(0, -1).join(', '), '', commas[commas.length - 1]]
+  return [clean, '', '']
+}
+
+const AUTO_DETAIL_KEYS = ['clientName', 'clientAddressLine1', 'clientAddressLine2', 'clientCityStateZipCountry', 'collectionDateRange']
 
 /** Row-level derived values for the read-only columns — same formulas as the Certificate/Calculator. */
 function computeRowDerived(row) {
@@ -65,7 +107,7 @@ function computeRowDerived(row) {
 }
 
 const ROW_FIELDS = [
-  ['item', 'Asset Category', 'text'],
+  ['item', 'Item', 'text'],
   ['qtyKg', 'Qty (kg)', 'number'],
   ['metalKg', 'Metal (kg)', 'number'],
   ['plasticKg', 'Plastic (kg)', 'number'],
@@ -96,34 +138,60 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   const [placedImages, setPlacedImages] = useState([])
   // Bumped to reset the RR picker (its ticks and filters) after "Clear RRs".
   const [pickerKey, setPickerKey] = useState(0)
-  // The "Items collected" range the RRs filled in, so Clear RRs only clears it if it wasn't typed over.
-  const autoRangeRef = useRef('')
+  // The Report Details values the RRs filled in (client, address, items-collected
+  // range), so new RRs / Clear RRs only replace them if they weren't typed over.
+  const autoDetailsRef = useRef({})
+  // Every RR currently in the report, in the order they were added.
+  const [rrRefs, setRrRefs] = useState([])
+  const rrRefsRef = useRef([])
+  const rrSummariesRef = useRef([])
+
+  /** Report Details from the RRs in the report: client = first RR's account, its billing address, the received-date range. */
+  function autoDetailsFrom(summaries) {
+    if (!summaries.length) return Object.fromEntries(AUTO_DETAIL_KEYS.map((k) => [k, '']))
+    const first = summaries[0]
+    const [clientAddressLine1, clientAddressLine2, clientCityStateZipCountry] = splitAddress(first.billingAddress || first.pickupAddress)
+    const dates = summaries.map((s) => s.receivedDateIso).filter(Boolean).sort()
+    return {
+      clientName: first.accountName || first.companyName || '',
+      clientAddressLine1,
+      clientAddressLine2,
+      clientCityStateZipCountry,
+      collectionDateRange: dates.length ? collectionRangeLabel(dates[0], dates[dates.length - 1]) : '',
+    }
+  }
+
+  /** Put the RR-derived details into the form, keeping anything the user typed over. */
+  function applyAutoDetails(f, summaries) {
+    const next = autoDetailsFrom(summaries)
+    const prev = autoDetailsRef.current
+    const out = { ...f }
+    for (const k of AUTO_DETAIL_KEYS) {
+      const untouched = !f[k] || f[k] === prev[k]
+      if (untouched) out[k] = next[k]
+    }
+    autoDetailsRef.current = next
+    return out
+  }
 
   /**
-   * Add each RR as its own asset-category row, skipping any RR that's
-   * already in the table. Returns { added, skipped } reference numbers.
+   * Add RRs to the report: their items become "Item" rows (merged by item
+   * type), and Report Details are auto-filled from them. RRs already in the
+   * report are skipped. Returns { added, skipped } summaries / reference numbers.
    */
   function addRrRows(summaries) {
-    const alreadyIn = (rows) => new Set(rows.map((r) => r.rrReferenceNo).filter(Boolean))
-    const existing = alreadyIn(form.rows)
-    const toAdd = summaries.filter((s) => !existing.has(s.referenceNo))
+    const existing = new Set(rrRefsRef.current)
+    const toAdd = summaries.filter((s, i) => !existing.has(s.referenceNo) && summaries.findIndex((o) => o.referenceNo === s.referenceNo) === i)
     const skipped = summaries.filter((s) => existing.has(s.referenceNo)).map((s) => s.referenceNo)
     if (toAdd.length) {
+      rrRefsRef.current = [...rrRefsRef.current, ...toAdd.map((s) => s.referenceNo)]
+      rrSummariesRef.current = [...rrSummariesRef.current, ...toAdd]
+      setRrRefs(rrRefsRef.current)
+      const allSummaries = rrSummariesRef.current
       setForm((f) => {
-        // Re-check against the latest rows too, so an RR can never be added
-        // twice even if this runs again before the state update lands.
-        const latest = alreadyIn(f.rows)
-        const fresh = toAdd.filter((s) => !latest.has(s.referenceNo))
-        if (!fresh.length) return f
-        const dates = fresh.map((s) => s.receivedDateIso).filter(Boolean).sort()
         const onlyRowIsBlank = f.rows.length === 1 && isBlankRow(f.rows[0])
-        const newRows = fresh.map(rowFromRrSummary)
-        let collectionDateRange = f.collectionDateRange
-        if (!collectionDateRange && dates.length) {
-          collectionDateRange = `${dates[0]} to ${dates[dates.length - 1]}`
-          autoRangeRef.current = collectionDateRange
-        }
-        return { ...f, collectionDateRange, rows: onlyRowIsBlank ? newRows : [...f.rows, ...newRows] }
+        const rows = mergeRrItemRows(onlyRowIsBlank ? [] : f.rows, toAdd)
+        return applyAutoDetails({ ...f, rows }, allSummaries)
       })
       // New figures: drop hand-edited numbers/client text in the preview editor.
       setTextOverrides(withoutReportDataOverrides)
@@ -131,33 +199,37 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
     return { added: toAdd, skipped }
   }
 
-  const rrRowCount = form.rows.filter((r) => r.rrReferenceNo).length
+  const rrCount = rrRefs.length
 
   /** Remove every row that came from an RR (manual/calculator rows stay), and reset the RR picker. */
   function clearRrs() {
     setForm((f) => {
-      const kept = f.rows.filter((r) => !r.rrReferenceNo)
-      return {
-        ...f,
-        rows: kept.length ? kept : [emptyAssetCategoryRow()],
-        collectionDateRange: f.collectionDateRange === autoRangeRef.current ? '' : f.collectionDateRange,
-      }
+      const kept = f.rows.filter((r) => !r.rrReferenceNos)
+      return applyAutoDetails({ ...f, rows: kept.length ? kept : [emptyAssetCategoryRow()] }, [])
     })
-    autoRangeRef.current = ''
+    rrRefsRef.current = []
+    rrSummariesRef.current = []
+    setRrRefs([])
+    autoDetailsRef.current = {}
     setTextOverrides(withoutReportDataOverrides)
     setPickerKey((k) => k + 1)
-    setStatus({ tone: 'info', message: `Cleared ${rrRowCount} RR row(s) from the report.` })
+    setStatus({ tone: 'info', message: `Cleared ${rrCount} RR(s) from the report.` })
   }
 
   function rrAddedMessage({ added, skipped }) {
-    const skippedNote = skipped.length ? ` Skipped ${skipped.length} already in the table (${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ', …' : ''}).` : ''
+    const skippedNote = skipped.length ? ` Skipped ${skipped.length} already in the report (${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ', …' : ''}).` : ''
     if (!added.length) return { tone: 'info', message: `Nothing new to add.${skippedNote}` }
     const totalWeight = added.reduce((s, r) => s + r.totalNetWeight, 0)
     const matchedWeight = added.reduce((s, r) => s + r.materialsMatchedNetWeight, 0)
     const matchedPct = formatNumber(totalWeight > 0 ? (matchedWeight / totalWeight) * 100 : 0, 0)
+    const accounts = [...new Set(rrSummariesRef.current.map((s) => s.accountName).filter(Boolean))]
+    const accountNote =
+      accounts.length > 1
+        ? ` Heads up: these RRs belong to ${accounts.length} different accounts (${accounts.slice(0, 3).join(', ')}${accounts.length > 3 ? ', …' : ''}) — the client was set to the first one, check it.`
+        : ''
     return {
-      tone: 'success',
-      message: `Added ${added.length} RR(s) as asset category rows (${formatKg(totalWeight)} net weight). Material Breakdown (and Carbon) auto-filled from the material split catalog for ~${matchedPct}% of the weight by item type — check rows with an uncovered item type and adjust if needed.${skippedNote}`,
+      tone: accounts.length > 1 ? 'info' : 'success',
+      message: `Added ${added.length} RR(s) (${formatKg(totalWeight)} net weight) — one row per item, and Report Details filled from the RR. Material Breakdown (and Carbon) auto-filled from the material split catalog for ~${matchedPct}% of the weight — check items marked "not found in catalog".${accountNote}${skippedNote}`,
     }
   }
 
@@ -199,8 +271,18 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
   }
 
   function removeRow(index) {
-    setForm((f) => ({ ...f, rows: f.rows.filter((_, i) => i !== index) }))
+    setForm((f) => {
+      const rows = f.rows.filter((_, i) => i !== index)
+      // Every RR item row gone: forget the RRs too, so they can be added again.
+      if (!rows.some((r) => r.rrReferenceNos)) {
+        rrRefsRef.current = []
+        rrSummariesRef.current = []
+        setRrRefs([])
+      }
+      return { ...f, rows }
+    })
   }
+
 
   const preview = useMemo(() => buildEsgReportData(form), [form])
   const reportData = useMemo(() => ({ ...preview, textOverrides }), [preview, textOverrides])
@@ -241,7 +323,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
     <div className="flex flex-col gap-5">
       <Card
         title="Load from Receiving Reports"
-        subtitle="Tick the RRs to include in this report — each one becomes its own asset category row. Narrow the list by received date or search."
+        subtitle="Tick the RRs to include in this report — their items fill the Detailed Impact Breakdown (one row per item) and the client / items-collected details fill in automatically. Narrow the list by received date or search."
       >
         <RrMultiPicker
           key={pickerKey}
@@ -249,9 +331,9 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
           onApply={(summaries) => setStatus(rrAddedMessage(addRrRows(summaries)))}
           clearOnApply
         />
-        {rrRowCount > 0 && (
+        {rrCount > 0 && (
           <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-            <span>{rrRowCount} RR(s) in this report.</span>
+            <span>{rrCount} RR(s) in this report: {rrRefs.slice(0, 6).join(', ')}{rrRefs.length > 6 ? ', …' : ''}</span>
             <GhostButton type="button" onClick={clearRrs} className="hover:border-red-200 hover:bg-red-50 hover:text-red-700">
               Clear RRs
             </GhostButton>
@@ -261,7 +343,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
 
       <Card
         title="Detailed Impact Breakdown"
-        subtitle="One row per asset category — matches Table 1 of the client template. Carbon/water/energy/landfill columns are computed, not typed."
+        subtitle="One row per item — matches Table 1 of the client template. Carbon/water/energy/landfill columns are computed, not typed."
       >
         {errors.rows && <p className="mb-2 text-xs text-red-600">{errors.rows}</p>}
         <div className="overflow-x-auto">
@@ -327,7 +409,7 @@ export const ReportGenerator = forwardRef(function ReportGenerator({ rowToAdd, o
           </table>
         </div>
         <GhostButton type="button" onClick={addRow} className="mt-2">
-          + Add asset category
+          + Add item
         </GhostButton>
       </Card>
 

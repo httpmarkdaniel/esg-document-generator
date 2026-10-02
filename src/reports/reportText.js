@@ -46,7 +46,7 @@ export function reportTextFields(data) {
     f('Header', 'reportIssued', 'Report issued line', `Report issued: ${reportIssueDateLabel}`),
 
     f('1. Introduction', 'h1', 'Heading', '1. Introduction'),
-    f('1. Introduction', 'intro0', 'Paragraph 1', `This report highlights the environmental benefits of electronic recyclables collected from ${b(clientName)}.`, true),
+    f('1. Introduction', 'intro0', 'Paragraph 1', `This report highlights the environmental benefits of electronic recyclables collected from ${b(clientName)}${/\.$/.test(clientName) ? '' : '.'}`, true),
     f(
       '1. Introduction',
       'intro1',

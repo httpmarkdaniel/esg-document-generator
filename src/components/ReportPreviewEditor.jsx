@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Card, GhostButton } from './Card.jsx'
 import { EditablePage } from './editor/EditablePage.jsx'
+import { TextBoxesLayer } from './editor/TextBoxesLayer.jsx'
 import { ImagesSection, BuiltInSection, TextFieldsSection } from './editor/EditorPanels.jsx'
 import { withText, withoutKey, withSignatures, withHiddenImages, hiddenImageSet, countEdits } from './editor/overrides.js'
 import { placedImagesFromFiles } from './editor/placeImages.js'
@@ -24,12 +25,14 @@ const PREVIEW_DEBOUNCE_MS = 400
  */
 export function ReportPreviewEditor({ data, overrides, onOverridesChange, images, onImagesChange, actions }) {
   const [pages, setPages] = useState([])
-  const [layout, setLayout] = useState({ pageCount: 0, builtInBoxes: [] })
+  const [layout, setLayout] = useState({ pageCount: 0, builtInBoxes: [], textBoxes: [] })
   const [rendering, setRendering] = useState(false)
   const [renderError, setRenderError] = useState(null)
   const [editing, setEditing] = useState(false)
   const [selectedImageId, setSelectedImageId] = useState(null)
   const [imageError, setImageError] = useState(null)
+  // The text field being edited right on the page (its key), if any.
+  const [activeTextKey, setActiveTextKey] = useState(null)
 
   // While editing, added images are draggable boxes over the pages, so the
   // rendered pages leave them out; outside editing they're rendered in.
@@ -60,6 +63,8 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
   }, [renderData])
 
   const fields = useMemo(() => reportTextFields({ ...data, textOverrides: {} }), [data])
+  const defaults = useMemo(() => Object.fromEntries(fields.map((f) => [f.key, f.value])), [fields])
+  const valueOf = (key) => (key in overrides ? overrides[key] : defaults[key] ?? '')
   const hidden = useMemo(() => hiddenImageSet(overrides), [overrides])
   const editedCount = countEdits(overrides, fields)
   // An image placed on a page that no longer exists (the report got shorter) shows — and prints — on the last page.
@@ -103,7 +108,7 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
   }
 
   return (
-    <Card title="Report Preview" subtitle="This is the exact PDF that gets generated, every page — it updates as you change the form.">
+    <Card title="Report Preview" subtitle="This is the exact PDF that gets generated, every page — it updates as you change the form. Click ✎ Edit report, then click any paragraph, heading or bullet on the page to reword it right there.">
       {actions && <div className="mb-4 border-b border-gray-100 pb-4">{actions}</div>}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-gray-500">
@@ -119,7 +124,10 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
           )}
           <GhostButton
             type="button"
-            onClick={() => setEditing((e) => !e)}
+            onClick={() => {
+              setEditing((e) => !e)
+              setActiveTextKey(null)
+            }}
             className={editing ? 'border-brand-green bg-brand-green-light text-brand-green-dark' : ''}
           >
             {editing ? 'Done editing' : '✎ Edit report'}
@@ -148,6 +156,19 @@ export function ReportPreviewEditor({ data, overrides, onOverridesChange, images
                   onSelectImage={setSelectedImageId}
                   onDropFiles={(files, at) => addImageFiles(files, at, page)}
                   label={`Report page ${page + 1}`}
+                  extraLayer={
+                    <TextBoxesLayer
+                      boxes={(layout.textBoxes || []).filter((b) => b.page === page)}
+                      pageW={PAGE_W_MM}
+                      pageH={PAGE_H_MM}
+                      valueOf={valueOf}
+                      defaultOf={(key) => defaults[key] ?? ''}
+                      onSave={(key, value) => onOverridesChange(withText(overrides, key, value, defaults[key] ?? ''))}
+                      onReset={(key) => onOverridesChange(withoutKey(overrides, key))}
+                      activeKey={activeTextKey}
+                      onActivate={(box) => setActiveTextKey(box ? box.key : null)}
+                    />
+                  }
                 />
               </div>
             ))}

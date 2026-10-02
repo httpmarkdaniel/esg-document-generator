@@ -69,6 +69,25 @@ const SIG_NAVY = [20, 42, 78]
 // remove targets exactly on them). Reset per document in drawReportPdf.
 let hidden = new Set()
 let builtInBoxes = []
+// Where each editable text field landed (mm, per page) — returned to the
+// preview editor so a field can be clicked and edited right on the page.
+// Recording them never changes what's drawn.
+let textBoxes = []
+
+const PT_MM = 0.3528
+/** Grow (or start) the box of text field `key` on the current page to cover one line at `baseline`. */
+function markText(doc, key, x, w, baseline, size) {
+  if (!key) return
+  const page = doc.getCurrentPageInfo().pageNumber - 1
+  const top = baseline - size * PT_MM * 0.85
+  const bottom = baseline + size * PT_MM * 0.3
+  const box = textBoxes.find((b) => b.key === key && b.page === page)
+  if (box) {
+    const y2 = Math.max(box.y + box.h, bottom)
+    box.y = Math.min(box.y, top)
+    box.h = y2 - box.y
+  } else textBoxes.push({ key, page, x, y: top, w, h: bottom - top, size })
+}
 
 // ---------------------------------------------------------------------------
 // Body flow: a cursor (page baseline `y`) plus the kind of the last block, so
@@ -124,7 +143,7 @@ function place(flow, kind, height) {
 }
 
 /** Wrapped rich-text block; breaks onto the next page between lines when needed. */
-function textBlock(flow, kind, text, { x = X_TEXT, size = TEXT_SIZE, lineHeight = LINE, align = 'left' } = {}) {
+function textBlock(flow, kind, text, { x = X_TEXT, size = TEXT_SIZE, lineHeight = LINE, align = 'left', key } = {}) {
   if (!text) return
   const { doc } = flow
   const maxWidth = X_RIGHT - x
@@ -139,15 +158,17 @@ function textBlock(flow, kind, text, { x = X_TEXT, size = TEXT_SIZE, lineHeight 
       }
     }
     doc.setTextColor(...BLACK)
+    markText(doc, key, x, maxWidth, flow.y, size)
     drawRichLines(doc, [line], { font: FONT, size, x, y: flow.y, lineHeight, align, centerX: PAGE_W / 2, maxWidth, lastLine: i === lines.length - 1 })
   })
 }
 
 /** "1. Introduction": the number at X_HEAD, the words at X_HEAD_TEXT, bold 11pt. */
-function heading(flow, text) {
+function heading(flow, text, key) {
   if (!text) return
   place(flow, 'heading', 6)
   const { doc } = flow
+  markText(doc, key, X_HEAD, X_RIGHT - X_HEAD, flow.y, 11)
   doc.setTextColor(...BLACK)
   doc.setFont(FONT, 'bold')
   doc.setFontSize(11)
@@ -158,13 +179,13 @@ function heading(flow, text) {
   } else doc.text(text, X_HEAD, flow.y)
 }
 
-function subheading(flow, text) {
+function subheading(flow, text, key) {
   if (!text) return
-  textBlock(flow, 'sub', `**${text}**`, { x: X_HEAD_TEXT })
+  textBlock(flow, 'sub', `**${text}**`, { x: X_HEAD_TEXT, key })
 }
 
 /** Hollow "o" bullet with its (rich, wrapped) text. */
-function bullet(flow, text) {
+function bullet(flow, text, key) {
   if (!text) return
   const { doc } = flow
   const lines = wrapRich(doc, text, { font: FONT, size: TEXT_SIZE, maxWidth: X_RIGHT - X_BULLET_TEXT })
@@ -175,6 +196,7 @@ function bullet(flow, text) {
   doc.text('o', X_BULLET, flow.y)
   lines.forEach((line, i) => {
     if (i > 0) flow.y += LINE
+    markText(doc, key, X_BULLET_TEXT, X_RIGHT - X_BULLET_TEXT, flow.y, TEXT_SIZE)
     drawRichLines(doc, [line], {
       font: FONT,
       size: TEXT_SIZE,
@@ -376,14 +398,17 @@ function drawSignOff(flow, assets, T, showSignatures) {
     doc.setFont(FONT, 'normal')
     doc.setFontSize(9)
     if (T[`role${i}`]) doc.text(T[`role${i}`], cx - 22, labelY)
+    markText(doc, `role${i}`, cx - 22, 30, labelY, 9)
 
     doc.setTextColor(...SIG_NAVY)
     doc.setFont('Poppins', 'semibold')
     doc.setFontSize(NAME_SIZE)
     if (T[`sig${i}Name`]) doc.text(T[`sig${i}Name`], cx, nameY, { align: 'center' })
+    markText(doc, `sig${i}Name`, cx - 25, 50, nameY, NAME_SIZE)
     doc.setFont('Poppins', 'normal')
     doc.setFontSize(7)
     if (T[`sig${i}Title`]) doc.text(T[`sig${i}Title`].toUpperCase(), cx, nameY + 3.9, { align: 'center' })
+    markText(doc, `sig${i}Title`, cx - 25, 50, nameY + 3.9, 7)
 
     // Pen signature on top of the name (ink over print), only above the person's OWN name.
     const offset = SIGNATURE_OFFSETS[sig.signature]
@@ -405,13 +430,15 @@ function drawSignOff(flow, assets, T, showSignatures) {
 
 /**
  * Draws the whole report. Returns the layout the preview editor needs:
- * { pageCount, builtInBoxes } — where each built-in image landed (mm, per page).
+ * { pageCount, builtInBoxes, textBoxes } — where each built-in image and each
+ * editable text field landed (mm, per page).
  */
 export function drawReportPdf(doc, assets, data) {
   const { rows, totals, recycledMaterials } = data
   const T = resolveReportText(data)
   hidden = new Set(data.textOverrides?.hiddenImages || [])
   builtInBoxes = []
+  textBoxes = []
   const flow = newFlow(doc)
 
   // Title + Client / Prepared by / Reporting Period block
@@ -420,26 +447,29 @@ export function drawReportPdf(doc, assets, data) {
     doc.setFont(FONT, 'bold')
     doc.setFontSize(12)
     doc.text(T.title, PAGE_W / 2, TOP + 0.7, { align: 'center' })
+    markText(doc, 'title', PAGE_W / 2 - 60, 120, TOP + 0.7, 12)
   }
   flow.y = TOP + 0.7
   flow.last = 'title'
+  // [key, text] pairs: the label, then its value lines.
   const group = (label, values) => {
-    const lines = [label && `**${label}**`, ...values].filter(Boolean)
+    const lines = [[label[0], label[1] && `**${label[1]}**`], ...values].filter(([, text]) => text)
     if (!lines.length) return
-    lines.forEach((text, i) => textBlock(flow, i === 0 ? 'label' : 'value', text))
+    lines.forEach(([key, text], i) => textBlock(flow, i === 0 ? 'label' : 'value', text, { key }))
   }
-  group(T.clientLabel, [T.clientName, T.clientAddress1, T.clientAddress2, T.clientCity])
-  group(T.preparedLabel, [T.preparedName, T.preparedAddress])
-  group(T.periodLabel, [T.itemsCollected, T.reportIssued])
+  const kv = (...keys) => keys.map((k) => [k, T[k]])
+  group(['clientLabel', T.clientLabel], kv('clientName', 'clientAddress1', 'clientAddress2', 'clientCity'))
+  group(['preparedLabel', T.preparedLabel], kv('preparedName', 'preparedAddress'))
+  group(['periodLabel', T.periodLabel], kv('itemsCollected', 'reportIssued'))
 
   // 1. Introduction
-  heading(flow, T.h1)
-  for (let i = 0; i < 3; i++) textBlock(flow, 'para', T[`intro${i}`], { align: 'justify' })
+  heading(flow, T.h1, 'h1')
+  for (let i = 0; i < 3; i++) textBlock(flow, 'para', T[`intro${i}`], { align: 'justify', key: `intro${i}` })
 
   // 2. Detailed Impact Breakdown
-  heading(flow, T.h2)
-  subheading(flow, T.h21)
-  textBlock(flow, 'desc', T.p21, { x: X_HEAD, align: 'justify' })
+  heading(flow, T.h2, 'h2')
+  subheading(flow, T.h21, 'h21')
+  textBlock(flow, 'desc', T.p21, { x: X_HEAD, align: 'justify', key: 'p21' })
 
   const n1 = (v) => formatNumber(v, 1)
   const body = rows.map((r, i) => [
@@ -484,15 +514,15 @@ export function drawReportPdf(doc, assets, data) {
       if (hook.section === 'body' && hook.row.index === body.length - 1) hook.cell.styles.fontStyle = 'bold'
     },
   })
-  textBlock(flow, 'caption', T.table1Caption, { size: 8, align: 'center' })
+  textBlock(flow, 'caption', T.table1Caption, { size: 8, align: 'center', key: 'table1Caption' })
 
   // 2.2 Subtotal
-  subheading(flow, T.h22)
-  for (let i = 0; i < 7; i++) bullet(flow, T[`b22_${i}`])
+  subheading(flow, T.h22, 'h22')
+  for (let i = 0; i < 7; i++) bullet(flow, T[`b22_${i}`], `b22_${i}`)
 
   // 3. Recycled Materials
-  heading(flow, T.h3)
-  textBlock(flow, 'desc', T.p3, { x: X_HEAD, align: 'justify' })
+  heading(flow, T.h3, 'h3')
+  textBlock(flow, 'desc', T.p3, { x: X_HEAD, align: 'justify', key: 'p3' })
   table(flow, {
     head: [['Material', 'Quantity (kg)', 'Environmental Benefit']],
     body: recycledMaterials.map((m) => [m.material, n1(m.quantityKg), m.benefit]),
@@ -500,20 +530,21 @@ export function drawReportPdf(doc, assets, data) {
     columnStyles: { 0: { cellWidth: 36 }, 1: { halign: 'center', cellWidth: 28 } },
     rowPageBreak: 'avoid',
   })
-  textBlock(flow, 'caption', T.table2Caption, { size: 8, align: 'center' })
+  textBlock(flow, 'caption', T.table2Caption, { size: 8, align: 'center', key: 'table2Caption' })
 
   // 4. Methodology — "4.1 Data Collection:" in bold, running into its text.
-  heading(flow, T.h4)
+  heading(flow, T.h4, 'h4')
   METHODOLOGY_SECTIONS.forEach((_, i) => {
     const head = T[`m${i}Heading`]
     const text = T[`m${i}Body`]
     const combined = [head && `**${head}**`, text].filter(Boolean).join(' ')
-    textBlock(flow, 'para', combined, { x: X_HEAD_TEXT, align: 'justify' })
+    // On-page editing edits the paragraph text (its bold heading is a separate field in the side panel).
+    textBlock(flow, 'para', combined, { x: X_HEAD_TEXT, align: 'justify', key: text ? `m${i}Body` : `m${i}Heading` })
   })
 
   // 5. Environmental Impact
-  heading(flow, T.h5)
-  textBlock(flow, 'para5', T.p5, { x: X_HEAD, align: 'justify' })
+  heading(flow, T.h5, 'h5')
+  textBlock(flow, 'para5', T.p5, { x: X_HEAD, align: 'justify', key: 'p5' })
   const groups = [
     ['h51', 'b51_', 3],
     ['h52', 'b52_', 2],
@@ -521,13 +552,13 @@ export function drawReportPdf(doc, assets, data) {
     ['h54', 'b54_', 2],
   ]
   for (const [h, prefix, count] of groups) {
-    subheading(flow, T[h])
-    for (let i = 0; i < count; i++) bullet(flow, T[`${prefix}${i}`])
+    subheading(flow, T[h], h)
+    for (let i = 0; i < count; i++) bullet(flow, T[`${prefix}${i}`], `${prefix}${i}`)
   }
 
   // 6. Conclusion
-  heading(flow, T.h6)
-  CONCLUSION_PARAGRAPHS.forEach((_, i) => textBlock(flow, i === 0 ? 'concl' : 'para', T[`concl${i}`], { align: 'justify' }))
+  heading(flow, T.h6, 'h6')
+  CONCLUSION_PARAGRAPHS.forEach((_, i) => textBlock(flow, i === 0 ? 'concl' : 'para', T[`concl${i}`], { align: 'justify', key: `concl${i}` }))
 
   drawSignOff(flow, assets, T, !data.textOverrides?.hideSignatures)
 
@@ -540,7 +571,7 @@ export function drawReportPdf(doc, assets, data) {
   }
 
   drawPlacedImages(doc, data.placedImages)
-  return { pageCount, builtInBoxes }
+  return { pageCount, builtInBoxes, textBoxes }
 }
 
 /**

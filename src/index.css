@@ -23,3 +23,11 @@ body {
   font-family: 'Poppins', system-ui, 'Segoe UI', Roboto, sans-serif;
   color: #1f2937;
 }
+
+/* Lora (the report's body font) for editing report text right on the page. */
+@font-face {
+  font-family: 'Lora';
+  src: url('./assets/fonts/Lora-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
