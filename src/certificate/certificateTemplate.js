@@ -58,6 +58,23 @@ const LOGO_WIDTH = 62.7
 // and in what font/size/colour. That's the starting layout of the fields
 // when a custom (Canva) design is uploaded — see drawCustomDesign below.
 let fieldLog = null
+// Where each text field's printed text sits on the page (mm box), so the
+// preview editor can let you click it and edit it right there. Recording it
+// never changes what's drawn.
+let textBoxLog = null
+const PT_MM = 0.3528
+
+function logTextBox(doc, key, text, x, y, options = {}) {
+  if (!textBoxLog || !key || text === '' || text == null) return
+  const size = doc.getFontSize()
+  const lines = options.maxWidth ? doc.splitTextToSize(String(text), options.maxWidth) : String(text).split('\n')
+  const w = Math.max(...lines.map((l) => doc.getTextWidth(l)), 2)
+  const align = options.align || 'left'
+  const left = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x
+  const lineH = size * PT_MM * 1.15 // jsPDF's default line height
+  const top = y - size * PT_MM * 0.85
+  textBoxLog.push({ key, page: 0, x: left, y: top, w, h: (lines.length - 1) * lineH + size * PT_MM * 1.15, size, align, bold: doc.getFont().fontStyle === 'bold' })
+}
 
 function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex))
@@ -85,6 +102,7 @@ function drawText(doc, text, x, y, options, key) {
   if (text === '' || text == null) return
   doc.text(text, x, y, options)
   recordText(doc, key, x, y, options)
+  logTextBox(doc, key, text, x, y, options)
 }
 
 function withAlpha(doc, alpha, fn) {
@@ -215,6 +233,7 @@ function drawFooter(doc, assets, T, { showSignatures, hidden }) {
   if (T.disclaimer) {
     doc.text(doc.splitTextToSize(T.disclaimer, pageWidth - MARGIN * 2), pageWidth / 2, y, { align: 'center' })
     recordText(doc, 'disclaimer', pageWidth / 2, y, { align: 'center', maxWidth: pageWidth - MARGIN * 2 })
+    logTextBox(doc, 'disclaimer', T.disclaimer, pageWidth / 2, y, { align: 'center', maxWidth: pageWidth - MARGIN * 2 })
   }
 
   // Real compliance-logo strip (ISO/BSI/FDA/UN/etc.), extracted from the
@@ -304,6 +323,7 @@ function drawStatTile(doc, assets, x, y, w, label, value, labelLines = 1, iconKe
   if (label) {
     doc.text(doc.splitTextToSize(label, textW), textX, y + 2.5)
     recordText(doc, keys[0], textX, y + 2.5, { maxWidth: textW })
+    logTextBox(doc, keys[0], label, textX, y + 2.5, { maxWidth: textW })
   }
 
   const valueY = y + 2.5 + labelLines * STAT_TILE_LABEL_LINE_HEIGHT + 4
@@ -513,11 +533,14 @@ export function drawCertificate(doc, assets, data) {
   const drawAssets = { ...assets, hideIcons: hidden.has(ICONS_ID) }
   if (hidden.has(LOGO_ID)) delete drawAssets.logo
   fieldLog = {}
+  textBoxLog = []
   drawer(doc, drawAssets, T, { showSignatures: !data.textOverrides?.hideSignatures, hidden })
   const fields = fieldLog
+  const textBoxes = textBoxLog
   fieldLog = null
+  textBoxLog = null
   drawPlacedImages(doc, data.placedImages)
-  return { fields }
+  return { fields, textBoxes }
 }
 
 /**

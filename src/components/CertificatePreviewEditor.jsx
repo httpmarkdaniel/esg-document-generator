@@ -3,6 +3,7 @@ import { Card, GhostButton } from './Card.jsx'
 import { EditablePage } from './editor/EditablePage.jsx'
 import { DesignPanel } from './editor/DesignPanel.jsx'
 import { DesignFieldsLayer } from './editor/DesignFieldsLayer.jsx'
+import { TextBoxesLayer } from './editor/TextBoxesLayer.jsx'
 import { ImagesSection, BuiltInSection, TextFieldsSection } from './editor/EditorPanels.jsx'
 import { withText, withoutKey, withSignatures, withHiddenImages, hiddenImageSet, countEdits } from './editor/overrides.js'
 import { placedImagesFromFiles } from './editor/placeImages.js'
@@ -42,6 +43,8 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
   const [selectedFieldKey, setSelectedFieldKey] = useState(null)
   const [designUploading, setDesignUploading] = useState(false)
   const [designError, setDesignError] = useState(null)
+  // The text field being edited right on the certificate (its key), if any.
+  const [activeTextKey, setActiveTextKey] = useState(null)
 
   // While editing, the added images are shown as draggable boxes over the
   // preview (so moving one is instant), so the rendered page leaves them out;
@@ -75,6 +78,8 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
   // Defaults come from the data WITHOUT overrides, so the editor can show
   // what Reset goes back to.
   const fields = useMemo(() => certificateTextFields({ ...data, textOverrides: {} }), [data])
+  const defaults = useMemo(() => Object.fromEntries(fields.map((f) => [f.key, f.value])), [fields])
+  const valueOf = (key) => (key in overrides ? overrides[key] : defaults[key] ?? '')
   const hidden = useMemo(() => hiddenImageSet(overrides), [overrides])
   const editedCount = countEdits(overrides, fields)
   const builtInBoxes = useMemo(
@@ -152,7 +157,7 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
   }
 
   return (
-    <Card title="Certificate Preview" subtitle="This is the exact PDF that gets generated — it updates as you change the form.">
+    <Card title="Certificate Preview" subtitle="This is the exact PDF that gets generated — it updates as you change the form. Click ✎ Edit certificate, then click any text on the certificate to edit it right there.">
       {actions && <div className="mb-4 border-b border-gray-100 pb-4">{actions}</div>}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-gray-500">
@@ -174,7 +179,10 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
           )}
           <GhostButton
             type="button"
-            onClick={() => setEditing((e) => !e)}
+            onClick={() => {
+              setEditing((e) => !e)
+              setActiveTextKey(null)
+            }}
             className={editing ? 'border-brand-green bg-brand-green-light text-brand-green-dark' : ''}
           >
             {editing ? 'Done editing' : '✎ Edit certificate'}
@@ -211,10 +219,25 @@ export function CertificatePreviewEditor({ data, overrides, onOverridesChange, i
                   onFieldChange={changeField}
                   labelOf={labelOf}
                 />
-              ) : null
+              ) : (
+                <TextBoxesLayer
+                  boxes={layout.textBoxes || []}
+                  pageW={PAGE_W_MM}
+                  pageH={PAGE_H_MM}
+                  valueOf={valueOf}
+                  defaultOf={(key) => defaults[key] ?? ''}
+                  onSave={(key, value) => onOverridesChange(withText(overrides, key, value, defaults[key] ?? ''))}
+                  onReset={(key) => onOverridesChange(withoutKey(overrides, key))}
+                  activeKey={activeTextKey}
+                  onActivate={(box) => setActiveTextKey(box ? box.key : null)}
+                  fontFamily="Poppins, system-ui, sans-serif"
+                  lineRatio={1.15}
+                  minEditorW={90}
+                />
+              )
             }
           />
-          <p className="mt-1.5 text-[11px] text-gray-400">Tip: drag an image file (e.g. a client logo) onto the certificate to add it.</p>
+          <p className="mt-1.5 text-[11px] text-gray-400">Tip: in edit mode, click any text to edit it in place, or drag an image file (e.g. a client logo) onto the certificate to add it.</p>
         </div>
 
         {editing && (
