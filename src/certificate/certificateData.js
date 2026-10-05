@@ -17,6 +17,7 @@ export function emptyCertificateForm() {
     sequenceNumber: '1',
     recipient: '',
     companyAddress: '',
+    receivingReport: '',
     periodStart: '',
     periodEnd: '',
     givenDate: '',
@@ -95,6 +96,15 @@ export function formatReportingPeriod(periodStart, periodEnd) {
   return `${startMonth} ${startYear} to ${endMonth} ${endYear}`
 }
 
+/** "on February 28, 2025" / "from January 5, 2026 to February 2, 2026" — the "Items collected …" line (dates the RRs were received). */
+export function formatItemsCollected(periodStart, periodEnd) {
+  const start = formatDate(periodStart, '')
+  const end = formatDate(periodEnd, '')
+  if (!start && !end) return '—'
+  if (!start || !end || start === end) return `on ${start || end}`
+  return `from ${start} to ${end}`
+}
+
 /**
  * Normalize a raw certificate form into the clean, fully-derived shape the
  * PDF templates consume. Every numeric field is coerced to a finite number;
@@ -133,6 +143,8 @@ export function normalizeCertificateData(form, { certificateNumber } = {}) {
     periodStart: form.periodStart || null,
     periodEnd: form.periodEnd || null,
     reportingPeriodLabel: formatReportingPeriod(form.periodStart, form.periodEnd),
+    receivingReport: toText(form.receivingReport, ''),
+    itemsCollectedLabel: formatItemsCollected(form.periodStart, form.periodEnd),
     givenDate: form.givenDate || null,
     givenDateLabel: formatDate(form.givenDate),
 
@@ -161,11 +173,19 @@ export function normalizeCertificateData(form, { certificateNumber } = {}) {
   }
 }
 
-/** Certificate number in the real template's style, e.g. "EIC-2025-0001". */
+// Types already moved to the current EnviroCycle (Canva) numbering, e.g. "EPI-LDC2026-00004".
+const EPI_NUMBERED_TYPES = new Set(['CAC', 'LDC'])
+
+/** Certificate number in the real template's style: "EPI-LDC2026-00004" (CAC/LDC) or "EIC-2025-0001" (the rest). */
 export function generateCertificateNumber(certificateType, form) {
   const type = CERTIFICATE_TYPES[certificateType] || CERTIFICATE_TYPES.EIC
+  const seq = Math.max(1, Math.trunc(toNumber(form?.sequenceNumber) || 1))
+  if (EPI_NUMBERED_TYPES.has(type.id)) {
+    // Year the certificate is issued ("Given this day …").
+    const year = new Date(form?.givenDate || Date.now()).getFullYear() || new Date().getFullYear()
+    return `EPI-${type.prefix}${year}-${String(seq).padStart(5, '0')}`
+  }
   const referenceDate = form?.periodEnd || form?.givenDate || new Date().toISOString()
   const year = new Date(referenceDate).getFullYear() || new Date().getFullYear()
-  const seq = Math.max(1, Math.trunc(toNumber(form?.sequenceNumber) || 1))
   return `${type.prefix}-${year}-${String(seq).padStart(4, '0')}`
 }

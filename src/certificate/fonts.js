@@ -8,8 +8,15 @@ import poppinsRegularUrl from '../assets/fonts/Poppins-Regular.ttf'
 import poppinsBoldUrl from '../assets/fonts/Poppins-Bold.ttf'
 import poppinsItalicUrl from '../assets/fonts/Poppins-Italic.ttf'
 import poppinsSemiBoldUrl from '../assets/fonts/Poppins-SemiBold.ttf'
+// League Spartan + Nunito Sans (OFL, Google Fonts): the current Canva-made
+// CAC/LDC certificates' fonts (Nunito Sans stands in for Canva Sans, which
+// isn't licensed for use outside Canva).
+import nunitoRegularUrl from '../assets/fonts/NunitoSans-Regular.ttf'
+import nunitoBoldUrl from '../assets/fonts/NunitoSans-Bold.ttf'
+import nunitoItalicUrl from '../assets/fonts/NunitoSans-Italic.ttf'
+import spartanBoldUrl from '../assets/fonts/LeagueSpartan-Bold.ttf'
 
-export { registerPoppins } from './fontRegistration.js'
+export { registerPoppins, registerCanvaFonts, registerCertificateFonts } from './fontRegistration.js'
 
 const cache = new Map()
 
@@ -39,4 +46,21 @@ export async function loadPoppinsFonts() {
     loadBase64(poppinsSemiBoldUrl),
   ])
   return { regular, bold, italic, semibold }
+}
+
+/** Load (and cache) the Canva-certificate fonts as base64 (see registerCanvaFonts). */
+export async function loadCanvaFonts() {
+  const [nunitoRegular, nunitoBold, nunitoItalic, spartanBold] = await Promise.all([
+    loadBase64(nunitoRegularUrl),
+    loadBase64(nunitoBoldUrl),
+    loadBase64(nunitoItalicUrl),
+    loadBase64(spartanBoldUrl),
+  ])
+  return { nunitoRegular, nunitoBold, nunitoItalic, spartanBold }
+}
+
+/** Every font a certificate can use, for registerCertificateFonts. */
+export async function loadCertificateFonts() {
+  const [poppins, canva] = await Promise.all([loadPoppinsFonts(), loadCanvaFonts()])
+  return { poppins, canva }
 }

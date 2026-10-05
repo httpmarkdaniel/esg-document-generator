@@ -49,8 +49,8 @@ export const CERTIFICATE_TYPES = {
   LDC: {
     id: 'LDC',
     prefix: 'LDC',
-    label: 'Landfill Diverted Certificate',
-    title: 'LANDFILL DIVERTED CERTIFICATE',
+    label: 'Landfill Diversion Certificate',
+    title: 'LANDFILL DIVERSION CERTIFICATE',
   },
   RPC: {
     id: 'RPC',

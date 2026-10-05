@@ -9,9 +9,9 @@
 // The data model (certificateData.js) should not need to change when this
 // file does.
 
-import autoTable from 'jspdf-autotable'
 import { BRAND, SIGNATORIES } from '../lib/brand.js'
-import { resolveCertificateText } from './certificateText.js'
+import { resolveCertificateText, LDC_TABLE_ROWS, ldcRowKey } from './certificateText.js'
+import { wrapRich, drawRichLines } from '../reports/richText.js'
 import { LOGO_ID, ICONS_ID, COMPLIANCE_LOGOS, complianceLogoBoxes, hiddenImageSet } from './builtInImages.js'
 import { ASSET_DIMENSIONS } from './assetDimensions.js'
 
@@ -97,12 +97,26 @@ function recordText(doc, key, x, y, options = {}) {
   }
 }
 
-/** Draw text unless it's empty (an empty string is how the preview editor hides a line); `key` records it (see fieldLog). */
+/**
+ * Draw text unless it's empty (an empty string is how the preview editor hides a line); `key` records it (see fieldLog).
+ * `options.letterSpacing` (em) spreads a single line out, like Canva's letter spacing.
+ */
 function drawText(doc, text, x, y, options, key) {
   if (text === '' || text == null) return
+  if (options?.letterSpacing) return drawSpacedText(doc, String(text), x, y, options, key)
   doc.text(text, x, y, options)
   recordText(doc, key, x, y, options)
   logTextBox(doc, key, text, x, y, options)
+}
+
+function drawSpacedText(doc, text, x, y, { align = 'left', letterSpacing }, key) {
+  const size = doc.getFontSize()
+  const charSpace = letterSpacing * size * PT_MM
+  const w = doc.getTextWidth(text) + charSpace * (text.length - 1)
+  const left = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x
+  doc.text(text, left, y, { charSpace })
+  recordText(doc, key, x, y, { align })
+  if (textBoxLog && key) textBoxLog.push({ key, page: 0, x: left, y: y - size * PT_MM * 0.85, w, h: size * PT_MM * 1.15, size, align, bold: doc.getFont().fontStyle === 'bold' })
 }
 
 function withAlpha(doc, alpha, fn) {
@@ -163,7 +177,7 @@ function drawHeader(doc, assets, T) {
   return y
 }
 
-/** Recipient name / address / reporting-period block, shared by all types. */
+/** Recipient name / address / reporting-period (or RR + items collected) block, for EIC and RPC. */
 function drawRecipientBlock(doc, T, y) {
   const pageWidth = doc.internal.pageSize.getWidth()
   let cursorY = y + 11
@@ -181,16 +195,23 @@ function drawRecipientBlock(doc, T, y) {
     drawText(doc, T.address, pageWidth / 2, cursorY, { align: 'center' }, 'address')
   }
 
-  cursorY += 9
   doc.setFont('Poppins', 'italic')
   doc.setFontSize(10)
   doc.setTextColor(...BRAND.ink)
-  drawText(doc, T.period, pageWidth / 2, cursorY, { align: 'center' }, 'period')
-
-  return cursorY + 8
+  if ('period' in T) {
+    cursorY += 9
+    drawText(doc, T.period, pageWidth / 2, cursorY, { align: 'center' }, 'period')
+    return cursorY + 8
+  }
+  // "Receiving Report: S…" over "Items collected on …" (EIC).
+  cursorY += 7
+  drawText(doc, T.receivingReport, pageWidth / 2, cursorY, { align: 'center' }, 'receivingReport')
+  cursorY += 4.5
+  drawText(doc, T.itemsCollected, pageWidth / 2, cursorY, { align: 'center' }, 'itemsCollected')
+  return cursorY + 6.5
 }
 
-/** Given-date line, signature row, disclaimer, compliance-logo strip, and bottom accent bar. Shared by all types. */
+/** Given-date line, signature row, disclaimer, compliance-logo strip, and bottom accent bar. For EIC and RPC. */
 function drawFooter(doc, assets, T, { showSignatures, hidden }) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -235,6 +256,14 @@ function drawFooter(doc, assets, T, { showSignatures, hidden }) {
     recordText(doc, 'disclaimer', pageWidth / 2, y, { align: 'center', maxWidth: pageWidth - MARGIN * 2 })
     logTextBox(doc, 'disclaimer', T.disclaimer, pageWidth / 2, y, { align: 'center', maxWidth: pageWidth - MARGIN * 2 })
   }
+
+  drawComplianceStrip(doc, assets, hidden)
+}
+
+/** Compliance-logo strip and the bottom accent bar — the same on every certificate. */
+function drawComplianceStrip(doc, assets, hidden) {
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
 
   // Real compliance-logo strip (ISO/BSI/FDA/UN/etc.), extracted from the
   // reference PDF at its own exact size/position (page.get_image_info()):
@@ -398,94 +427,243 @@ function drawEnvironmentalImpactCertificate(doc, assets, T, options) {
 }
 
 // ---------------------------------------------------------------------------
-// Carbon Abatement Certificate (CAC)
+// Current EnviroCycle (Canva) layout — shared by CAC and LDC
 // ---------------------------------------------------------------------------
-function drawCarbonAbatementCertificate(doc, assets, T, options) {
-  let y = drawHeader(doc, assets, T)
-  y = drawRecipientBlock(doc, T, y)
+// Rebuilt from "Carbon Abatement Certificate - S19733.pdf" and
+// "Canva_LDC_For-Signature.pdf": every position below is that PDF's own
+// text origin / box, converted pt -> mm. Fonts: League Spartan (title,
+// recipient, section headings) and Nunito Sans standing in for Canva Sans.
 
-  doc.setTextColor(...BRAND.muted)
-  doc.setFont('Poppins', 'italic')
-  doc.setFontSize(8.5)
-  drawText(doc, T.basis, doc.internal.pageSize.getWidth() / 2, y, { align: 'center' }, 'basis')
-  y += 8
+const CANVA = {
+  green: [0, 104, 56],
+  navy: [12, 40, 59],
+  black: [0, 0, 0],
+  grey: [115, 115, 115],
+  tableBorder: [2, 108, 32],
+}
+const CANVA_BADGE_SIZE = 15.5
+// maxWidth wraps the disclaimer where the reference does (Nunito Sans runs a little narrower than Canva Sans).
+const CANVA_DISCLAIMER = { centerX: 144.1, y: 183, lineHeight: 3.7, maxWidth: 205, size: 8 }
 
+/** Header band, certificate no., title and "IS ISSUED TO :" (at `issuedY`). */
+function drawCanvaHeader(doc, assets, T, issuedY) {
   const pageWidth = doc.internal.pageSize.getWidth()
-  const tiles = [
-    { label: T.collectedLabel, value: T.collectedValue, icon: 'iconRecycle', keys: ['collectedLabel', 'collectedValue'] },
-    { label: T.footprintLabel, value: T.footprintValue, icon: 'iconFootprint', keys: ['footprintLabel', 'footprintValue'] },
-    { label: T.abatedLabel, value: T.abatedValue, icon: 'iconCo2', keys: ['abatedLabel', 'abatedValue'] },
-    { label: T.recycledEmissionsLabel, value: T.recycledEmissionsValue, icon: 'iconCloud', keys: ['recycledEmissionsLabel', 'recycledEmissionsValue'] },
-    { label: T.kmLabel, value: T.kmValue, icon: 'iconCar', keys: ['kmLabel', 'kmValue'] },
-  ]
-  const cols = 3
-  const tileW = (pageWidth - MARGIN * 2) / cols
-  const maxLabelLines = Math.max(...tiles.map((t) => statTileLabelLineCount(doc, t.label, tileW - 6)))
-  tiles.forEach((tile, i) => {
-    const col = i % cols
-    const row = Math.floor(i / cols)
-    drawStatTile(doc, assets, MARGIN + tileW * col, y + row * 20, tileW - 6, tile.label, tile.value, maxLabelLines, tile.icon, tile.keys)
+  drawHeaderShape(doc, 'limeShadow', HEADER_SHADOW_COLOR)
+  drawHeaderShape(doc, 'lime', BRAND.lime)
+  drawHeaderShape(doc, 'navyShadow', HEADER_SHADOW_COLOR)
+  drawHeaderShape(doc, 'navy', BRAND.navy)
+  drawAsset(doc, assets, 'logo', LOGO_X, LOGO_Y, LOGO_WIDTH)
+
+  doc.setFont('NunitoSans', 'normal')
+  doc.setFontSize(11)
+  doc.setTextColor(...CANVA.black)
+  drawText(doc, T.certificateNo, 280.3, 17.6, { align: 'right' }, 'certificateNo')
+
+  doc.setFont('LeagueSpartan', 'bold')
+  doc.setFontSize(26)
+  doc.setTextColor(...CANVA.green)
+  drawText(doc, T.title, pageWidth / 2, 39.2, { align: 'center', letterSpacing: 0.06 }, 'title')
+
+  doc.setFont('NunitoSans', 'normal')
+  doc.setFontSize(14)
+  doc.setTextColor(...CANVA.black)
+  drawText(doc, T.issuedTo, pageWidth / 2, issuedY, { align: 'center' }, 'issuedTo')
+}
+
+/** Recipient name + address, then the italic lines under them: [{ key, y }]. */
+function drawCanvaRecipient(doc, T, { recipientY, addressY, lines }) {
+  const cx = doc.internal.pageSize.getWidth() / 2
+  doc.setFont('LeagueSpartan', 'bold')
+  doc.setFontSize(22)
+  doc.setTextColor(...CANVA.navy)
+  drawText(doc, T.recipient, cx, recipientY, { align: 'center' }, 'recipient')
+
+  doc.setFont('NunitoSans', 'normal')
+  doc.setFontSize(11)
+  doc.setTextColor(...CANVA.black)
+  drawText(doc, T.address, cx, addressY, { align: 'center' }, 'address')
+
+  doc.setFont('NunitoSans', 'italic')
+  doc.setFontSize(10)
+  for (const { key, y } of lines) drawText(doc, T[key], cx, y, { align: 'center' }, key)
+}
+
+/** Badge icon (top-left at x, y) with a bold label and a big green value to its right, plus an optional small note under the value. */
+function drawCanvaTile(doc, assets, T, { x, y, icon, prefix, labelDy = 4.6, noteKey }) {
+  if (!assets?.hideIcons && assets?.[icon]) {
+    const dim = ASSET_DIMENSIONS[icon]
+    const h = CANVA_BADGE_SIZE * (dim.height / dim.width)
+    doc.addImage(assets[icon], 'PNG', x, y + (CANVA_BADGE_SIZE - h) / 2, CANVA_BADGE_SIZE, h)
+  }
+  const textX = x + 20.1
+  const labelY = y + labelDy
+  doc.setFont('NunitoSans', 'bold')
+  doc.setFontSize(9)
+  doc.setTextColor(...CANVA.black)
+  drawText(doc, T[`${prefix}Label`], textX, labelY, undefined, `${prefix}Label`)
+
+  doc.setFontSize(18)
+  doc.setTextColor(...CANVA.green)
+  drawText(doc, T[`${prefix}Value`], textX, labelY + 7.7, undefined, `${prefix}Value`)
+
+  if (noteKey) {
+    doc.setFontSize(10)
+    drawText(doc, T[noteKey], textX, labelY + 13.5, undefined, noteKey)
+  }
+}
+
+// Each pen signature's size and spot on the reference certificates: mm per
+// image pixel, centre offset from the name's centre, and how far its lowest
+// stroke reaches below the name's baseline.
+const CANVA_SIGNATURES = {
+  sigSanchez: { mmPerPx: 0.0775, dx: 9.1, bottom: 2.8 },
+  sigLaconsay: { mmPerPx: 0.0819, dx: 0.1, bottom: -1.1 },
+  sigBweheni: { mmPerPx: 0.0846, dx: 3.8, bottom: 3.1 },
+}
+
+function drawCanvaSignature(doc, assets, key, nameCx, nameBaseline, fieldKey) {
+  const image = assets?.[key]
+  const place = CANVA_SIGNATURES[key]
+  if (!image || !place) return
+  const dim = ASSET_DIMENSIONS[key]
+  const w = dim.width * place.mmPerPx
+  const h = dim.height * place.mmPerPx
+  const x = nameCx + place.dx - w / 2
+  const y = nameBaseline + place.bottom - h
+  doc.addImage(image, 'PNG', x, y, w, h)
+  if (fieldLog && fieldKey) fieldLog[fieldKey] = { kind: 'image', image: key, x, y, w, h }
+}
+
+/** "Given this day" lines, signatories, bold-marked disclaimer, compliance strip and bottom bar. */
+function drawCanvaFooter(doc, assets, T, { givenY, sigY, sigCenters, showSignatures, hidden }) {
+  const cx = doc.internal.pageSize.getWidth() / 2
+  doc.setFont('NunitoSans', 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(...CANVA.black)
+  drawText(doc, T.givenLine, cx, givenY, { align: 'center' }, 'givenLine')
+  drawText(doc, T.companyAddress, cx, givenY + 4.7, { align: 'center' }, 'companyAddress')
+
+  // No signature lines on these certificates — the pen signature is drawn over the name.
+  SIGNATORIES.forEach((sig, i) => {
+    const x = sigCenters[i]
+    doc.setTextColor(...CANVA.navy)
+    doc.setFont('NunitoSans', 'bold')
+    doc.setFontSize(13.3)
+    drawText(doc, T[`sig${i}Name`], x, sigY, { align: 'center' }, `sig${i}Name`)
+    doc.setFont('NunitoSans', 'normal')
+    doc.setFontSize(8.6)
+    drawText(doc, T[`sig${i}Title`], x, sigY + 5.1, { align: 'center' }, `sig${i}Title`)
+    if (showSignatures && sig.signature && T[`sig${i}Name`] === sig.name) drawCanvaSignature(doc, assets, sig.signature, x, sigY, `sig${i}Img`)
   })
 
-  drawFooter(doc, assets, T, options)
+  if (T.disclaimer) {
+    const { centerX, y, lineHeight, maxWidth, size } = CANVA_DISCLAIMER
+    doc.setTextColor(...CANVA.grey)
+    const lines = wrapRich(doc, T.disclaimer, { font: 'NunitoSans', size, maxWidth })
+    drawRichLines(doc, lines, { font: 'NunitoSans', size, y, lineHeight, align: 'center', centerX })
+    doc.setFont('NunitoSans', 'normal')
+    recordText(doc, 'disclaimer', centerX, y, { align: 'center', maxWidth })
+    logTextBox(doc, 'disclaimer', T.disclaimer.replaceAll('**', ''), centerX, y, { align: 'center', maxWidth })
+  }
+
+  drawComplianceStrip(doc, assets, hidden)
 }
 
 // ---------------------------------------------------------------------------
-// Landfill Diverted Certificate (LDC)
+// Carbon Abatement Certificate (CAC)
 // ---------------------------------------------------------------------------
-function drawLandfillDivertedCertificate(doc, assets, T, options) {
-  let y = drawHeader(doc, assets, T)
-  y = drawRecipientBlock(doc, T, y)
+function drawCarbonAbatementCertificate(doc, assets, T, options) {
+  drawCanvaHeader(doc, assets, T, 52.2)
+  drawCanvaRecipient(doc, T, {
+    recipientY: 65.2,
+    addressY: 74.1,
+    lines: [
+      { key: 'itemsCollected', y: 87.6 },
+      { key: 'basis', y: 92.4 },
+    ],
+  })
 
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const leftW = (pageWidth - MARGIN * 2) * 0.4
-  const rightX = MARGIN + leftW + 8
+  // Two tiles on top, three below — as placed on the reference.
+  drawCanvaTile(doc, assets, T, { x: 71.8, y: 101.3, icon: 'iconRecycle', prefix: 'collected' })
+  drawCanvaTile(doc, assets, T, { x: 145.4, y: 101.3, icon: 'iconFootprint', prefix: 'footprint' })
+  drawCanvaTile(doc, assets, T, { x: 21.0, y: 120.9, icon: 'iconCo2', prefix: 'abated' })
+  drawCanvaTile(doc, assets, T, { x: 108.7, y: 120.1, icon: 'iconCloud', prefix: 'recycledEmissions' })
+  drawCanvaTile(doc, assets, T, { x: 189.8, y: 120.2, icon: 'iconCar', prefix: 'km', labelDy: 2.8, noteKey: 'kmNote' })
 
-  doc.setTextColor(...BRAND.green)
-  doc.setFont('Poppins', 'bold')
-  doc.setFontSize(9.5)
-  drawText(doc, T.diversionHeading, MARGIN, y, undefined, 'diversionHeading')
-  drawText(doc, T.recycledHeading, rightX, y, undefined, 'recycledHeading')
-  y += 6
+  drawCanvaFooter(doc, assets, T, { ...options, givenY: 145.6, sigY: 167.1, sigCenters: [62.25, 152.2, 233.95] })
+}
 
-  drawStatTile(doc, assets, MARGIN, y, leftW, T.collectedLabel, T.collectedValue, 1, 'iconRecycle', ['collectedLabel', 'collectedValue'])
-  drawStatTile(doc, assets, MARGIN, y + 16, leftW, T.landfillLabel, T.landfillValue, 1, 'iconLandfill', ['landfillLabel', 'landfillValue'])
+// ---------------------------------------------------------------------------
+// Landfill Diversion Certificate (LDC)
+// ---------------------------------------------------------------------------
+// "Recycled Materials Summary" table: column edges (mm) and text metrics.
+const LDC_TABLE = { cols: [119.8, 145.0, 183.2, 276.4], top: 92.9, pad: 2.1, size: 9, lineHeight: 4.2, minRowHeight: 9.5 }
 
-  // Rows only exist for materials with weight (see certificateText.js).
-  const rows = ['Metal', 'Plastic', 'Glass', 'Electronics']
-    .filter((m) => `row${m}Label` in T)
-    .map((m) => [T[`row${m}Label`], T[`row${m}Amount`], T[`row${m}Benefit`]])
+function drawLandfillDiversionCertificate(doc, assets, T, options) {
+  drawCanvaHeader(doc, assets, T, 47.0)
+  drawCanvaRecipient(doc, T, {
+    recipientY: 60.0,
+    addressY: 68.9,
+    lines: [
+      { key: 'receivingReport', y: 75.6 },
+      { key: 'itemsCollected', y: 80.4 },
+    ],
+  })
 
-  if (rows.length) {
-    autoTable(doc, {
-      startY: y,
-      margin: { left: rightX, right: MARGIN },
-      tableWidth: pageWidth - MARGIN - rightX,
-      body: rows,
-      theme: 'grid',
-      styles: { fontSize: 8, textColor: BRAND.ink, cellPadding: 2 },
-      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 22 }, 1: { fontStyle: 'bold', textColor: BRAND.green, cellWidth: 30 } },
-      didDrawCell: (hook) => {
-        if (!fieldLog || hook.section !== 'body') return
-        const material = ['Metal', 'Plastic', 'Glass', 'Electronics'].filter((m) => `row${m}Label` in T)[hook.row.index]
-        const key = `row${material}${['Label', 'Amount', 'Benefit'][hook.column.index]}`
-        const bold = hook.column.index < 2
-        fieldLog[key] = {
-          kind: 'text',
-          x: hook.cell.x + 2,
-          y: hook.cell.y + hook.cell.height / 2 + 1,
-          align: 'left',
-          font: 'Poppins',
-          style: bold ? 'bold' : 'normal',
-          size: 8,
-          color: hook.column.index === 1 ? BRAND.green : BRAND.ink,
-          ...(hook.column.index === 2 ? { maxWidth: hook.cell.width - 4 } : {}),
-        }
-      },
-    })
+  doc.setTextColor(...CANVA.green)
+  doc.setFont('LeagueSpartan', 'bold')
+  doc.setFontSize(9)
+  drawText(doc, T.diversionHeading, 47.8, 94.7, { letterSpacing: 0.06 }, 'diversionHeading')
+  drawText(doc, T.recycledHeading, 191.2, 88.7, { align: 'center', letterSpacing: 0.06 }, 'recycledHeading')
+
+  drawCanvaTile(doc, assets, T, { x: 35.1, y: 100.3, icon: 'iconRecycle', prefix: 'collected' })
+  drawCanvaTile(doc, assets, T, { x: 35.1, y: 120.1, icon: 'iconLandfill', prefix: 'landfill' })
+
+  drawLdcTable(doc, T)
+
+  drawCanvaFooter(doc, assets, T, { ...options, givenY: 151.5, sigY: 170.8, sigCenters: [58.6, 148.55, 230.25] })
+}
+
+/** The materials table: name | amount (bold green, centered) | benefit, green grid. Rows only exist for the keys present in T (see certificateText.js). */
+function drawLdcTable(doc, T) {
+  const { cols, top, pad, size, lineHeight, minRowHeight } = LDC_TABLE
+  const rows = LDC_TABLE_ROWS.map(ldcRowKey).filter((key) => `${key}Label` in T)
+  if (!rows.length) return
+  const lineHeightFactor = lineHeight / (size * PT_MM)
+  const cellWidth = (c) => cols[c + 1] - cols[c] - pad * 2
+  const lineCount = (text, c, style) => {
+    if (!text) return 1
+    doc.setFont('NunitoSans', style)
+    doc.setFontSize(size)
+    return doc.splitTextToSize(String(text), cellWidth(c)).length
   }
 
-  drawFooter(doc, assets, T, options)
+  let y = top
+  const rowEdges = [top]
+  for (const key of rows) {
+    const cells = [
+      { text: T[`${key}Label`], key: `${key}Label`, style: 'normal', color: CANVA.black, align: 'left' },
+      { text: T[`${key}Amount`], key: `${key}Amount`, style: 'bold', color: CANVA.green, align: 'center' },
+      { text: T[`${key}Benefit`], key: `${key}Benefit`, style: 'normal', color: CANVA.black, align: 'left' },
+    ]
+    const counts = cells.map((cell, c) => lineCount(cell.text, c, cell.style))
+    const h = Math.max(minRowHeight, Math.max(...counts) * lineHeight + 4.3)
+    cells.forEach((cell, c) => {
+      const firstBaseline = y + h / 2 - ((counts[c] - 1) * lineHeight) / 2 + 1.15
+      const x = cell.align === 'center' ? (cols[c] + cols[c + 1]) / 2 : cols[c] + pad
+      doc.setFont('NunitoSans', cell.style)
+      doc.setFontSize(size)
+      doc.setTextColor(...cell.color)
+      drawText(doc, cell.text, x, firstBaseline, { align: cell.align, maxWidth: cellWidth(c), lineHeightFactor }, cell.key)
+    })
+    y += h
+    rowEdges.push(y)
+  }
+
+  doc.setDrawColor(...CANVA.tableBorder)
+  doc.setLineWidth(0.26)
+  for (const edge of rowEdges) doc.line(cols[0], edge, cols[cols.length - 1], edge)
+  for (const x of cols) doc.line(x, top, x, y)
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +691,7 @@ function drawRecycledPlasticsCertificate(doc, assets, T, options) {
 const DRAWERS = {
   EIC: drawEnvironmentalImpactCertificate,
   CAC: drawCarbonAbatementCertificate,
-  LDC: drawLandfillDivertedCertificate,
+  LDC: drawLandfillDiversionCertificate,
   RPC: drawRecycledPlasticsCertificate,
 }
 

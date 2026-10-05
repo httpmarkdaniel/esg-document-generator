@@ -6,7 +6,7 @@
 import { jsPDF } from 'jspdf'
 import { drawCertificate } from './certificateTemplate.js'
 import { loadCertificateAssets } from './assets.js'
-import { loadPoppinsFonts, registerPoppins } from './fonts.js'
+import { loadCertificateFonts, loadCanvaFonts, registerCertificateFonts, registerCanvaFonts } from './fonts.js'
 import { mergeDesignFields } from './customDesign.js'
 import { loadReportFonts, registerReportFonts } from '../reports/fonts.js'
 import { formalizeForFilename, formalFilename } from '../lib/download.js'
@@ -29,19 +29,20 @@ export async function generateCertificatePdf(data) {
   if (data.customDesign) {
     // Record the regular layout first (never shown): it's where every field
     // starts on the design until it's moved in the editor.
-    const fonts = await loadReportFonts() // Lora + Poppins, the design fields' font choices
+    const [fonts, canvaFonts] = await Promise.all([loadReportFonts(), loadCanvaFonts()]) // the design fields' font choices
     const probe = newDoc()
-    registerPoppins(probe, fonts.poppins)
+    registerCertificateFonts(probe, { poppins: fonts.poppins, canva: canvaFonts })
     const { fields } = drawCertificate(probe, assets, { ...data, customDesign: null, placedImages: [] })
     const customFields = mergeDesignFields(fields, data.customDesign.fields)
 
     doc = newDoc()
     registerReportFonts(doc, fonts)
+    registerCanvaFonts(doc, canvaFonts)
     const { fieldBoxes } = drawCertificate(doc, assets, { ...data, customFields })
     layout = { fields, customFields, fieldBoxes }
   } else {
     doc = newDoc()
-    registerPoppins(doc, await loadPoppinsFonts())
+    registerCertificateFonts(doc, await loadCertificateFonts())
     layout = drawCertificate(doc, assets, data)
   }
 

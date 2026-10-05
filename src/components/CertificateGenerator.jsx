@@ -99,6 +99,10 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
       ...f,
       recipient: summary.accountName || f.recipient,
       companyAddress: summary.pickupAddress || summary.billingAddress || f.companyAddress,
+      // "Receiving Report: S…" and "Items collected on …" (the RRs' received dates).
+      receivingReport: summary.referenceNos.join(', '),
+      periodStart: summary.receivedDateFromIso || f.periodStart,
+      periodEnd: summary.receivedDateToIso || f.periodEnd,
       materialsCollectedKg: kgString(summary.totalNetWeight),
       landfillDivertedKg: kgString(summary.totalNetWeight),
       materials: {
@@ -137,6 +141,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
       ...f,
       recipient: '',
       companyAddress: '',
+      receivingReport: '',
       materialsCollectedKg: '',
       landfillDivertedKg: '',
       materials: { metalKg: '', plasticKg: '', glassKg: '', electronicsKg: '' },
@@ -247,7 +252,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
-              <FormField label="Reporting Period — From" error={errors.periodStart}>
+              <FormField label={type === 'RPC' ? 'Reporting Period — From' : 'Items Collected — From'} error={errors.periodStart}>
                 <TextInput
                   type="date"
                   value={form.periodStart}
@@ -255,7 +260,7 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
                   className={inputErrorClass(errors.periodStart)}
                 />
               </FormField>
-              <FormField label="Reporting Period — To" error={errors.periodEnd}>
+              <FormField label={type === 'RPC' ? 'Reporting Period — To' : 'Items Collected — To'} error={errors.periodEnd}>
                 <TextInput
                   type="date"
                   value={form.periodEnd}
@@ -272,6 +277,12 @@ export const CertificateGenerator = forwardRef(function CertificateGenerator(
                 />
               </FormField>
             </div>
+
+            {(type === 'EIC' || type === 'LDC') && (
+              <FormField label="Receiving Report No." hint="Filled from the RRs — e.g. S16817">
+                <TextInput value={form.receivingReport} onChange={(e) => setField('receivingReport', e.target.value)} placeholder="S16817" />
+              </FormField>
+            )}
 
             <FormField label="Certificate Sequence No." hint={`Formats as ${previewNumber}`}>
               <TextInput type="number" min="1" value={form.sequenceNumber} onChange={(e) => setField('sequenceNumber', e.target.value)} className="w-32" />

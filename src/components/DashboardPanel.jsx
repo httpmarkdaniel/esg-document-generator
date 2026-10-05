@@ -31,16 +31,16 @@ const GROUPS = [
     title: 'Carbon Abatement Certificate',
     color: 'bg-sky-50 text-sky-800',
     columns: [
-      ['cacCollected', 'Materials Collected (kg)', (d) => d.materialsCollectedKg, 2],
+      ['cacCollected', 'Materials Recycled (kg)', (d) => d.materialsCollectedKg, 2],
       ['cacFootprint', 'Total Carbon Footprint (kg CO2e)', (d) => d.totalCarbonFootprintKgCO2e, 2],
-      ['cacAbated', 'Net Carbon Abated (tCO2e)', (d) => d.netCarbonAbatedKgCO2e / 1000, 2],
+      ['cacAbated', 'Net Carbon Abated (kg CO2e)', (d) => d.netCarbonAbatedKgCO2e, 2],
       ['cacRecycled', 'Recycled Emissions (kg CO2e)', (d) => d.recycledEmissionsKgCO2e, 2],
       ['cacKm', 'Carbon Benefits Equivalent (km avoided)', (d) => d.kmAvoided, 0],
     ],
   },
   {
     id: 'LDC',
-    title: 'Landfill Diverted Certificate',
+    title: 'Landfill Diversion Certificate',
     color: 'bg-lime-50 text-lime-800',
     columns: [
       ['ldcCollected', 'Materials Collected (kg)', (d) => d.materialsCollectedKg, 2],

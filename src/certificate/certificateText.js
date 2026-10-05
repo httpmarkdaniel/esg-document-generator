@@ -9,10 +9,30 @@
 // withoutDataOverrides — so a hand-typed figure can't silently survive a
 // data change.
 
-import { formatKg, formatNumber, toText } from '../lib/format.js'
+import { formatNumber, toText } from '../lib/format.js'
 import { COMPANY, SIGNATORIES, CERTIFICATE_TYPES, CERTIFICATE_DISCLAIMER, MATERIAL_BENEFIT_TEXT } from '../lib/brand.js'
 
-const MATERIALS = ['Metal', 'Plastic', 'Glass', 'Electronics']
+// CAC/LDC follow the current EnviroCycle (Canva) certificates, whose
+// disclaimer bolds the standards' names — **…** marks the bold parts.
+const CERTIFICATE_DISCLAIMER_RICH = {
+  CAC: 'Calculated in accordance with the **GHG Protocol** and **ISO 14064** (where applicable); processing aligned with **R2v3**. Carbon abatement is estimated using an avoided-virgin material approach referencing **EPA WARM** and WEEE lifecycle sources; distance equivalency assumes 0.25 kg CO₂e per km.',
+  LDC: 'Calculated in accordance with the **GHG Protocol** and **ISO 14064** (where applicable); processing aligned with **R2v3**. Diversion and savings estimates support the **Zero Waste to Landfill** goal and apply an avoided-virgin material approach using EPA WARM and WEEE lifecycle references.',
+}
+
+// The Landfill Diversion Certificate's "Recycled Materials Summary" rows.
+// Whole Equipment (units kept whole, not broken down) has no data source yet,
+// so it's always listed and its amount is typed in the editor.
+export const LDC_TABLE_ROWS = ['Whole Equipment', 'Metal', 'Plastic', 'Glass', 'Electronics']
+const LDC_BENEFIT_TEXT = {
+  ...MATERIAL_BENEFIT_TEXT,
+  'Whole Equipment': 'Extends equipment life and reduces premature disposal.',
+  Glass: 'Saves furnace energy and raw mineral extraction.',
+}
+
+/** "Whole Equipment" -> "rowWholeEquipment", the prefix of that table row's text keys. */
+export function ldcRowKey(material) {
+  return `row${material.replace(/\s+/g, '')}`
+}
 
 function headerFields(data, type) {
   return [
@@ -21,8 +41,24 @@ function headerFields(data, type) {
     { key: 'issuedTo', section: 'Header', label: '"Is issued to" line', value: 'IS ISSUED TO :' },
     { key: 'recipient', section: 'Recipient', label: 'Recipient', value: toText(data.recipient) },
     { key: 'address', section: 'Recipient', label: 'Address', value: data.companyAddress && data.companyAddress !== '—' ? data.companyAddress : '' },
-    { key: 'period', section: 'Recipient', label: 'Reporting period line', value: `Reporting Period: ${data.reportingPeriodLabel}` },
+    ...collectionFields(data, type),
   ]
+}
+
+/** The italic line(s) under the address: RR no. + collection date (EIC/LDC), collection date (CAC), or the reporting period (RPC). */
+function collectionFields(data, type) {
+  const itemsCollected = { key: 'itemsCollected', section: 'Recipient', label: '"Items collected" line', value: `Items collected ${data.itemsCollectedLabel}` }
+  switch (type) {
+    case 'RPC':
+      return [{ key: 'period', section: 'Recipient', label: 'Reporting period line', value: `Reporting Period: ${data.reportingPeriodLabel}` }]
+    case 'CAC':
+      return [itemsCollected]
+    default:
+      return [
+        { key: 'receivingReport', section: 'Recipient', label: 'Receiving Report line', value: data.receivingReport ? `Receiving Report: ${data.receivingReport}` : '' },
+        itemsCollected,
+      ]
+  }
 }
 
 function footerFields(data, type) {
@@ -33,7 +69,13 @@ function footerFields(data, type) {
       { key: `sig${i}Name`, section: 'Signatories', label: `Signatory ${i + 1} name`, value: sig.name },
       { key: `sig${i}Title`, section: 'Signatories', label: `Signatory ${i + 1} title`, value: sig.title },
     ]),
-    { key: 'disclaimer', section: 'Footer', label: 'Disclaimer', value: CERTIFICATE_DISCLAIMER[type] || CERTIFICATE_DISCLAIMER.EIC, multiline: true },
+    {
+      key: 'disclaimer',
+      section: 'Footer',
+      label: 'Disclaimer',
+      value: CERTIFICATE_DISCLAIMER_RICH[type] || CERTIFICATE_DISCLAIMER[type] || CERTIFICATE_DISCLAIMER.EIC,
+      multiline: true,
+    },
   ]
 }
 
@@ -53,30 +95,33 @@ function bodyFields(data, type) {
           key: 'basis',
           section: 'Body',
           label: 'Basis line',
-          value: 'Basis: Net carbon abated = avoided virgin production emissions - recycled processing emissions',
+          value: 'Basis: Net carbon abated = avoided virgin production emissions − recycled processing emissions',
           multiline: true,
         },
-        ...tileFields('Stats', 'collected', 'Materials Collected', `${formatNumber(data.materialsCollectedKg)}\nKG`),
-        ...tileFields('Stats', 'footprint', 'Total Carbon Footprint', `${formatNumber(data.totalCarbonFootprintKgCO2e)}\nkg CO2e`),
-        ...tileFields('Stats', 'abated', 'Net Carbon Abated', `${formatNumber(data.netCarbonAbatedKgCO2e / 1000)}\ntCO2e`),
-        ...tileFields('Stats', 'recycledEmissions', 'Recycled Emissions', `${formatNumber(data.recycledEmissionsKgCO2e)}\nkg CO2e`),
-        ...tileFields('Stats', 'km', 'Carbon Benefits Equivalent', `~${formatNumber(data.kmAvoided, 0)} km\navoided`),
+        ...tileFields('Stats', 'collected', 'Materials Recycled', `${formatNumber(data.materialsCollectedKg)} kg`),
+        ...tileFields('Stats', 'footprint', 'Total Carbon Footprint', `${formatNumber(data.totalCarbonFootprintKgCO2e)} kg CO₂e`),
+        ...tileFields('Stats', 'abated', 'Net Carbon Abated (Carbon Saved)', `~${formatNumber(data.netCarbonAbatedKgCO2e)} kg CO₂e`),
+        ...tileFields('Stats', 'recycledEmissions', 'Recycled Emissions', `${formatNumber(data.recycledEmissionsKgCO2e)} kg CO₂e`),
+        ...tileFields('Stats', 'km', 'Carbon Benefits Equivalent', `~${formatNumber(data.kmAvoided, 0)} km avoided`),
+        { key: 'kmNote', section: 'Stats', label: 'Carbon Benefits Equivalent — note', value: '(0.25 kg CO₂e/km assumption)' },
       ]
     case 'LDC':
       return [
         { key: 'diversionHeading', section: 'Body', label: 'Left heading', value: 'MATERIAL DIVERSION SUMMARY' },
         { key: 'recycledHeading', section: 'Body', label: 'Right heading', value: 'RECYCLED MATERIALS SUMMARY' },
-        ...tileFields('Stats', 'collected', 'Materials Collected', `${formatNumber(data.materialsCollectedKg)} KG`),
-        ...tileFields('Stats', 'landfill', 'Landfill Diverted', `${formatNumber(data.landfillDivertedKg)} KG`),
-        // Table rows only exist for materials with weight, same as before.
-        ...MATERIALS.flatMap((m) => {
-          const weight = data.materials[`${m.toLowerCase()}Kg`]
-          if (weight <= 0) return []
+        ...tileFields('Stats', 'collected', 'Materials Collected', `${formatNumber(data.materialsCollectedKg)} kg`),
+        ...tileFields('Stats', 'landfill', 'Landfill Diverted', `${formatNumber(data.landfillDivertedKg)} kg`),
+        ...LDC_TABLE_ROWS.flatMap((m) => {
+          const whole = m === 'Whole Equipment'
+          const weight = whole ? 0 : data.materials[`${m.toLowerCase()}Kg`]
+          // Material rows only exist when that material has weight.
+          if (!whole && weight <= 0) return []
           const pct = data.materialsTotalKg > 0 ? (weight / data.materialsTotalKg) * 100 : 0
+          const key = ldcRowKey(m)
           return [
-            { key: `row${m}Label`, section: 'Materials table', label: `${m} — name`, value: m },
-            { key: `row${m}Amount`, section: 'Materials table', label: `${m} — amount`, value: `${formatKg(weight)} (${formatNumber(pct, 1)}%)` },
-            { key: `row${m}Benefit`, section: 'Materials table', label: `${m} — benefit text`, value: MATERIAL_BENEFIT_TEXT[m], multiline: true },
+            { key: `${key}Label`, section: 'Materials table', label: `${m} — name`, value: m },
+            { key: `${key}Amount`, section: 'Materials table', label: `${m} — amount`, value: `${formatNumber(weight, 3)} kg (${formatNumber(pct, 2)}%)` },
+            { key: `${key}Benefit`, section: 'Materials table', label: `${m} — benefit text`, value: LDC_BENEFIT_TEXT[m], multiline: true },
           ]
         }),
       ]
@@ -120,7 +165,7 @@ export function resolveCertificateText(data) {
 // Overrides that depend on the loaded data: every stat value / table amount,
 // plus the recipient block. Matched by key pattern so it also covers rows
 // that don't exist on the current data (e.g. an LDC material now at 0 kg).
-const DATA_DEPENDENT_KEY = /(Value|Amount)$|^(recipient|address|period)$/
+const DATA_DEPENDENT_KEY = /(Value|Amount)$|^(recipient|address|period|receivingReport|itemsCollected)$/
 
 /** Drop the overrides that depend on the loaded data, keeping edited wording (titles, signatories, disclaimer…). */
 export function withoutDataOverrides(overrides) {

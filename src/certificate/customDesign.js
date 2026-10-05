@@ -11,7 +11,7 @@ import { SIGNATORIES } from '../lib/brand.js'
 
 // Live data is shown on a custom design by default; fixed wording (titles,
 // labels, disclaimer…) is assumed to be part of the design, so it starts hidden.
-const DATA_KEY = /^(certificateNo|recipient|address|period|givenLine)$|Value$|Amount$|^sig\dImg$/
+const DATA_KEY = /^(certificateNo|recipient|address|period|receivingReport|itemsCollected|givenLine)$|Value$|Amount$|^sig\dImg$/
 
 export function isDataField(key) {
   return DATA_KEY.test(key)
@@ -34,4 +34,6 @@ export function fieldLabel(key, textFields) {
 export const DESIGN_FONTS = [
   { font: 'Poppins', label: 'Poppins' },
   { font: 'Lora', label: 'Lora' },
+  { font: 'NunitoSans', label: 'Nunito Sans' },
+  { font: 'LeagueSpartan', label: 'League Spartan' },
 ]
