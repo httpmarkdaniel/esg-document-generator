@@ -158,9 +158,71 @@ export function DashboardPanel() {
     const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `ESG Certificate Summary by Client${cert === 'ALL' ? '' : ` - ${cert}`} (${from || 'all'} to ${to || 'today'}).csv`
+    a.download = `${exportName}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
+  }
+
+  const exportName = `ESG Certificate Summary by Client${cert === 'ALL' ? '' : ` - ${cert}`} (${from || 'all'} to ${to || 'today'})`
+  const [exportingXlsx, setExportingXlsx] = useState(false)
+
+  /** Same table as the CSV, as a formatted Excel workbook (group headers, number formats, bold total, frozen header). */
+  async function exportExcel() {
+    setExportingXlsx(true)
+    try {
+      const { default: ExcelJS } = await import('exceljs') // loaded only when exporting
+      const wb = new ExcelJS.Workbook()
+      const ws = wb.addWorksheet('Summary by Client', { views: [{ state: 'frozen', xSplit: 2, ySplit: 4 }] })
+      const lastCol = 3 + columns.length
+
+      ws.mergeCells(1, 1, 1, lastCol)
+      ws.getCell(1, 1).value = `ESG Certificate Summary by Client — RRs received ${from || 'from the start'} to ${to || 'today'}${search ? ` · client search "${search}"` : ''}`
+      ws.getCell(1, 1).font = { bold: true, size: 13, color: { argb: 'FF006838' } }
+
+      // Row 3: certificate group headers over their columns; row 4: column headers.
+      let col = 4
+      for (const g of groups) {
+        ws.mergeCells(3, col, 3, col + g.columns.length - 1)
+        const cell = ws.getCell(3, col)
+        cell.value = g.title
+        cell.alignment = { horizontal: 'center' }
+        cell.font = { bold: true, color: { argb: 'FF006838' } }
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5EC' } }
+        col += g.columns.length
+      }
+      const header = ws.getRow(4)
+      header.values = ['Rank', 'Client', 'RRs', ...columns.map(([, label]) => label)]
+      header.font = { bold: true }
+      header.alignment = { wrapText: true, vertical: 'bottom' }
+      header.height = 32
+
+      for (const r of rows) ws.addRow([r.rank, r.client, r.rrCount, ...columns.map(([key, , , dec]) => Number((r[key] ?? 0).toFixed(dec)))])
+      const total = ws.addRow(['', `Total (all ${rows.length})`, totalRrs, ...columns.map(([key, , , dec]) => Number((totals[key] ?? 0).toFixed(dec)))])
+      total.font = { bold: true, color: { argb: 'FF006838' } }
+      total.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5EC' } }
+        cell.border = { top: { style: 'thin', color: { argb: 'FF006838' } } }
+      })
+
+      ws.getColumn(1).width = 6
+      ws.getColumn(2).width = 42
+      ws.getColumn(3).width = 7
+      columns.forEach(([, , , dec], i) => {
+        const c = ws.getColumn(4 + i)
+        c.width = 16
+        c.numFmt = dec === 0 ? '#,##0' : '#,##0.00'
+      })
+      ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: lastCol } }
+
+      const buffer = await wb.xlsx.writeBuffer()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      a.download = `${exportName}.xlsx`
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } finally {
+      setExportingXlsx(false)
+    }
   }
 
   const th = 'px-1.5 py-2 align-bottom text-[10px] font-semibold uppercase leading-tight tracking-wide text-gray-500 cursor-pointer select-none hover:text-brand-green-dark'
@@ -202,6 +264,9 @@ export function DashboardPanel() {
           <div className="flex-1" />
           <GhostButton type="button" onClick={exportCsv} disabled={!rows.length}>
             ⬇ Export CSV
+          </GhostButton>
+          <GhostButton type="button" onClick={exportExcel} disabled={!rows.length || exportingXlsx}>
+            {exportingXlsx ? 'Preparing Excel…' : '⬇ Export Excel'}
           </GhostButton>
         </div>
       </Card>
