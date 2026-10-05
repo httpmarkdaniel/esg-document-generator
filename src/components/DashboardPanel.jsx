@@ -77,6 +77,8 @@ const PRESETS = [
   ['All time', () => ['', '']],
 ]
 
+const PAGE_SIZE = 10
+
 export function DashboardPanel() {
   const [all, setAll] = useState(null)
   const [error, setError] = useState(null)
@@ -84,6 +86,7 @@ export function DashboardPanel() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState({ key: 'cacCollected', dir: 'desc' })
   const [cert, setCert] = useState('ALL')
+  const [page, setPage] = useState(0)
   const groups = cert === 'ALL' ? GROUPS : GROUPS.filter((g) => g.id === cert)
   const columns = groups.flatMap((g) => g.columns)
 
@@ -125,8 +128,19 @@ export function DashboardPanel() {
       })
     const dir = sort.dir === 'asc' ? 1 : -1
     list.sort((a, b) => (sort.key === 'client' ? a.client.localeCompare(b.client) * dir : ((a[sort.key] ?? 0) - (b[sort.key] ?? 0)) * dir))
-    return list
+    // Rank = place in the current sort order (e.g. #1 = most kg collected).
+    return list.map((r, i) => ({ ...r, rank: i + 1 }))
   }, [inPeriod, search, sort])
+
+  // 10 clients per page; back to page 1 whenever the list changes.
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const [pageFor, setPageFor] = useState(rows)
+  if (pageFor !== rows) {
+    setPageFor(rows)
+    setPage(0)
+  }
+  const currentPage = Math.min(page, pageCount - 1)
+  const pageRows = rows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
 
   const totals = useMemo(() => figuresFor(rows.flatMap((r) => r.summaries)), [rows])
   const totalRrs = rows.reduce((s, r) => s + r.rrCount, 0)
@@ -138,8 +152,8 @@ export function DashboardPanel() {
 
   function exportCsv() {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const header = ['Client', 'RRs', ...groups.flatMap((g) => g.columns.map(([, label]) => `${g.title} - ${label}`))]
-    const line = (r, name) => [name, r.rrCount, ...columns.map(([key, , , dec]) => (r[key] ?? 0).toFixed(dec))]
+    const header = ['Rank', 'Client', 'RRs', ...groups.flatMap((g) => g.columns.map(([, label]) => `${g.title} - ${label}`))]
+    const line = (r, name) => [r.rank ?? '', name, r.rrCount, ...columns.map(([key, , , dec]) => (r[key] ?? 0).toFixed(dec))]
     const csv = [header, ...rows.map((r) => line(r, r.client)), line({ ...totals, rrCount: totalRrs }, 'TOTAL')].map((r) => r.map(esc).join(',')).join('\n')
     const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
@@ -156,7 +170,7 @@ export function DashboardPanel() {
     <div className="flex flex-col gap-5">
       <Card
         title="Certificate Summary by Client"
-        subtitle="What the Environmental Impact, Carbon Abatement and Landfill Diverted certificates add up to per client, for every RR received in the period — the same figures a certificate for that client and period would print."
+        subtitle="What the Environmental Impact, Carbon Abatement and Landfill Diversion certificates add up to per client, for every RR received in the period — the same figures a certificate for that client and period would print."
       >
         <div className="grid gap-3 sm:grid-cols-[1.3fr_1fr_1fr_1.4fr]">
           <FormField label="Certificate">
@@ -196,7 +210,7 @@ export function DashboardPanel() {
         title={all ? `${rows.length} client(s) · ${totalRrs} RR(s)` : 'Loading Receiving Reports…'}
         subtitle={
           all
-            ? `Period: ${from || 'all RRs'} to ${to || 'today'}. Click a column to sort.${uncoveredKg > 0.005 ? ` Carbon/plastic figures only cover item types in the material split catalog (${formatNumber(uncoveredKg)} kg of the weight isn't in it).` : ''}`
+            ? `Period: ${from || 'all RRs'} to ${to || 'today'}. Click a column to sort — # is the rank in that order.${uncoveredKg > 0.005 ? ` Carbon/plastic figures only cover item types in the material split catalog (${formatNumber(uncoveredKg)} kg of the weight isn't in it).` : ''}`
             : undefined
         }
       >
@@ -214,7 +228,7 @@ export function DashboardPanel() {
             <table className="w-full border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-white">
                 <tr>
-                  <th className="border-b border-gray-100" colSpan={2} />
+                  <th className="border-b border-gray-100" colSpan={3} />
                   {groups.map((g) => (
                     <th key={g.title} colSpan={g.columns.length} className={`border-b border-l border-gray-100 px-2 py-1.5 text-center text-[11px] font-bold uppercase tracking-wide ${g.color}`}>
                       {g.title}
@@ -222,6 +236,7 @@ export function DashboardPanel() {
                   ))}
                 </tr>
                 <tr className="border-b border-gray-200 text-left">
+                  <th className={`${th} w-8 cursor-default text-right hover:text-gray-500`} title="Rank in the current sort order">#</th>
                   <th className={`${th} w-[16%] text-left`} onClick={() => toggleSort('client')}>Client{arrow('client')}</th>
                   <th className={`${th} text-right`} onClick={() => toggleSort('rrCount')}>RRs{arrow('rrCount')}</th>
                   {groups.map((g) =>
@@ -237,13 +252,14 @@ export function DashboardPanel() {
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={2 + columns.length} className="py-10 text-center text-sm text-gray-400">
+                    <td colSpan={3 + columns.length} className="py-10 text-center text-sm text-gray-400">
                       No RRs received in this period{search ? ' for that client' : ''}.
                     </td>
                   </tr>
                 )}
-                {rows.map((r) => (
+                {pageRows.map((r) => (
                   <tr key={r.client} className="border-b border-gray-50 hover:bg-gray-50/70">
+                    <td className="px-1.5 py-1.5 text-right align-top font-bold tabular-nums text-brand-green-dark">{r.rank}</td>
                     <td className="px-1.5 py-1.5 font-medium leading-snug text-gray-800">
                       {r.client}
                       <div className="text-[10px] font-normal text-gray-400">
@@ -264,7 +280,8 @@ export function DashboardPanel() {
               {rows.length > 0 && (
                 <tfoot className="sticky bottom-0 bg-brand-green-light">
                   <tr className="font-semibold text-brand-green-dark">
-                    <td className="px-1.5 py-2">Total</td>
+                    <td className="px-1.5 py-2" />
+                    <td className="px-1.5 py-2">Total (all {rows.length})</td>
                     <td className="px-1.5 py-2 text-right">{totalRrs}</td>
                     {groups.map((g) =>
                       g.columns.map(([key, , , dec], i) => (
@@ -277,6 +294,24 @@ export function DashboardPanel() {
                 </tfoot>
               )}
             </table>
+          </div>
+        )}
+        {all && rows.length > PAGE_SIZE && (
+          <div className="mt-3 flex items-center justify-between gap-3 text-xs text-gray-500">
+            <span>
+              Showing {currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, rows.length)} of {rows.length} clients
+            </span>
+            <div className="flex items-center gap-2">
+              <GhostButton type="button" onClick={() => setPage(currentPage - 1)} disabled={currentPage === 0}>
+                ‹ Prev
+              </GhostButton>
+              <span className="tabular-nums">
+                Page {currentPage + 1} of {pageCount}
+              </span>
+              <GhostButton type="button" onClick={() => setPage(currentPage + 1)} disabled={currentPage >= pageCount - 1}>
+                Next ›
+              </GhostButton>
+            </div>
           </div>
         )}
       </Card>
