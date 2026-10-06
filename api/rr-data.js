@@ -9,12 +9,40 @@
 //     harder to change later, and
 //   - swapping to authenticated access later (if the sheet goes private)
 //     only touches this file.
+//
+// 2025 RRs aren't in that sheet (it starts Jan 2026), so they're added from
+// the "NEO - Abatement Report" workbook:
+//   - its Jan-2025 … Apr-2025 tabs (every client, one row per item), and
+//   - its "Abatement Report" tab (NEO's RRs only, one block per RR), for the
+//     NEO RRs after April 2025 that the monthly tabs don't have.
+// An RR number already in the Receiving Reports sheet always comes from
+// there; the 2025 sources only add RR numbers it doesn't have.
 
 import Papa from 'papaparse'
 
-const SHEET_ID = '1z_IKx8vqsTo_Opk9cvlLpqWE6YaTZgSXgB5DXEVOIsI'
-const GID = '1661142632' // the RR consolidation tab
-const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`
+const csvUrl = (sheetId, gid) => `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`
+
+const CSV_URL = csvUrl('1z_IKx8vqsTo_Opk9cvlLpqWE6YaTZgSXgB5DXEVOIsI', '1661142632') // the RR consolidation tab
+
+const NEO_WORKBOOK_ID = '16CstnzOkrqfBnHf8DMtYUx8auVHhPBk-i2tpuvCcmUI'
+const MONTHLY_2025_URLS = ['2088008955', '1351992279', '445070157', '226866058'].map((gid) => csvUrl(NEO_WORKBOOK_ID, gid)) // Jan–Apr 2025
+const NEO_ABATEMENT_URL = csvUrl(NEO_WORKBOOK_ID, '49103372')
+// The Abatement Report tab has no client column; this is NEO's name as the monthly tabs spell it.
+const NEO_ACCOUNT_NAME = 'NEO Property Management Inc.'
+
+// 2025 monthly tabs: column header -> the same field names as FIELD_MAP.
+const MONTHLY_FIELD_MAP = {
+  'RR NO.': 'referenceNo',
+  'RECEIVED DATE': 'receivedDate',
+  'CLIENT/COMPANY NAME': 'accountName',
+  DESCRIPTION: 'itemType',
+  KILOS: 'kilos',
+  'NET WEIGHT': 'netWeight',
+  'QTY (PCS)': 'qty',
+  UOM: 'uom',
+  CATEGORY: 'category',
+  REMARKS: 'remarks',
+}
 
 // Sheet column header -> stable camelCase field name.
 const FIELD_MAP = {
@@ -78,11 +106,11 @@ function toIsoDate(value) {
 }
 
 /** The sheet export occasionally drops the connection mid-download ("terminated") — retry a couple of times. */
-async function fetchCsvWithRetry(attempts = 3) {
+async function fetchCsvWithRetry(url, attempts = 3) {
   let lastError
   for (let i = 0; i < attempts; i++) {
     try {
-      const res = await fetch(CSV_URL)
+      const res = await fetch(url)
       if (!res.ok) throw new Error(`Sheet fetch failed: HTTP ${res.status}`)
       return await res.text()
     } catch (err) {
@@ -97,37 +125,120 @@ let cache = null
 let cacheFetchedAt = 0
 const CACHE_MS = 5 * 60 * 1000
 
-async function loadItems() {
-  const now = Date.now()
-  if (cache && now - cacheFetchedAt < CACHE_MS) return cache
+function finishItem(item) {
+  item.kilos = toNumber(item.kilos)
+  item.palletWeight = toNumber(item.palletWeight)
+  item.netWeight = toNumber(item.netWeight)
+  item.qty = toNumber(item.qty)
+  item.receivedDateIso = toIsoDate(item.receivedDate)
+  return item
+}
 
-  const csvText = await fetchCsvWithRetry()
-
+/** Rows under the header row (found by `headerCell`), mapped through `fieldMap`. */
+function parseTable(csvText, headerCell, fieldMap, source) {
   const { data: rows } = Papa.parse(csvText, { skipEmptyLines: true })
-  const headerRowIndex = rows.findIndex((r) => r.includes('REFERENCE NO.'))
-  if (headerRowIndex === -1) throw new Error('Could not find the header row (REFERENCE NO.) in the sheet')
+  const headerRowIndex = rows.findIndex((r) => r.some((c) => c?.trim().toUpperCase() === headerCell))
+  if (headerRowIndex === -1) throw new Error(`Could not find the header row (${headerCell}) in ${source}`)
   const headers = rows[headerRowIndex]
 
   const items = []
   for (let i = headerRowIndex + 1; i < rows.length; i++) {
     const row = rows[i]
-    const item = {}
+    const item = { source }
     headers.forEach((h, idx) => {
-      const key = FIELD_MAP[h?.trim()]
+      const header = h?.trim() ?? ''
+      const key = fieldMap[header] ?? fieldMap[header.toUpperCase()]
       if (key) item[key] = (row[idx] ?? '').toString().trim()
     })
     if (!item.referenceNo) continue
-
-    item.kilos = toNumber(item.kilos)
-    item.palletWeight = toNumber(item.palletWeight)
-    item.netWeight = toNumber(item.netWeight)
-    item.qty = toNumber(item.qty)
-    item.receivedDateIso = toIsoDate(item.receivedDate)
-
-    items.push(item)
+    items.push(finishItem(item))
   }
+  return items
+}
 
-  cache = { items, fetchedAt: new Date().toISOString() }
+/**
+ * The Abatement Report tab: one block per RR — "RR No.: S16634" and
+ * "Received Date: 2/18/2025" label rows, then a "No. | Item | Qty | UOM |
+ * Total Weight (kg) | …" table ending in a "Total Weight" row. Only the item
+ * and its total weight are taken; the material split still comes from the
+ * catalog like every other RR.
+ */
+function parseAbatementBlocks(csvText, source) {
+  const { data: rows } = Papa.parse(csvText, { skipEmptyLines: true })
+  const items = []
+  let referenceNo = ''
+  let receivedDate = ''
+  let cols = null
+
+  for (const row of rows) {
+    const cells = row.map((c) => (c ?? '').toString().trim())
+    const labelIdx = cells.findIndex((c) => /^(RR No\.|Received Date):$/i.test(c))
+    if (labelIdx !== -1) {
+      const value = cells[labelIdx + 1] || ''
+      if (/^RR/i.test(cells[labelIdx])) {
+        referenceNo = value
+        cols = null
+      } else receivedDate = value
+      continue
+    }
+    if (cells.includes('Item') && cells.some((c) => /^Total Weight/i.test(c))) {
+      cols = { item: cells.indexOf('Item'), qty: cells.indexOf('Qty'), uom: cells.indexOf('UOM'), weight: cells.findIndex((c) => /^Total Weight/i.test(c)) }
+      continue
+    }
+    if (!cols || !referenceNo) continue
+    const itemType = cells[cols.item]
+    if (!itemType || /^Total Weight/i.test(itemType)) continue
+    items.push(
+      finishItem({
+        source,
+        referenceNo,
+        receivedDate,
+        accountName: NEO_ACCOUNT_NAME,
+        companyName: NEO_ACCOUNT_NAME,
+        itemType,
+        netWeight: cells[cols.weight],
+        qty: cols.qty === -1 ? '' : cells[cols.qty],
+        uom: cols.uom === -1 ? '' : cells[cols.uom],
+      }),
+    )
+  }
+  return items
+}
+
+/** Add `extra` items whose RR number isn't already in `items` (the earlier source wins). */
+function addNewRrs(items, extra) {
+  const known = new Set(items.map((i) => i.referenceNo))
+  return items.concat(extra.filter((i) => !known.has(i.referenceNo)))
+}
+
+async function loadItems() {
+  const now = Date.now()
+  if (cache && now - cacheFetchedAt < CACHE_MS) return cache
+
+  const [mainCsv, monthly, abatement] = await Promise.all([
+    fetchCsvWithRetry(CSV_URL),
+    Promise.allSettled(MONTHLY_2025_URLS.map((url) => fetchCsvWithRetry(url))),
+    fetchCsvWithRetry(NEO_ABATEMENT_URL).then(
+      (value) => ({ status: 'fulfilled', value }),
+      (reason) => ({ status: 'rejected', reason }),
+    ),
+  ])
+
+  let items = parseTable(mainCsv, 'REFERENCE NO.', FIELD_MAP, 'Receiving Reports')
+
+  // The 2025 sources are extras: if one fails, the 2026 RRs still load.
+  const warnings = []
+  const monthlyItems = []
+  monthly.forEach((r, i) => {
+    if (r.status === 'fulfilled') monthlyItems.push(...parseTable(r.value, 'RR NO.', MONTHLY_FIELD_MAP, '2025 monthly RRs'))
+    else warnings.push(`2025 monthly tab ${i + 1} failed to load: ${r.reason?.message || r.reason}`)
+  })
+  items = addNewRrs(items, monthlyItems)
+  if (abatement.status === 'fulfilled') items = addNewRrs(items, parseAbatementBlocks(abatement.value, 'NEO Abatement Report'))
+  else warnings.push(`NEO Abatement Report failed to load: ${abatement.reason?.message || abatement.reason}`)
+  if (warnings.length) console.warn('rr-data:', warnings.join('; '))
+
+  cache = { items, warnings, fetchedAt: new Date().toISOString() }
   cacheFetchedAt = now
   return cache
 }

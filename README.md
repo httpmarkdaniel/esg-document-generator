@@ -31,10 +31,14 @@ itself (see `src/calculator/calculatorEngine.js`).
 ## Receiving Report (RR) autofill
 
 Both the Certificate and the Report can also pull real records from
-Envirocycle's RR consolidation Google Sheet instead of manual entry:
+Envirocycle's RR consolidation Google Sheet instead of manual entry. That
+sheet starts in January 2026, so 2025 RRs come from the "NEO - Abatement
+Report" workbook: its Jan-2025 … Apr-2025 tabs (every client), plus its
+"Abatement Report" tab for NEO's later 2025 RRs. An RR number in the
+consolidation sheet always wins over the 2025 sources:
 
 - **Certificate**: a date-range loader narrows an RR-number picker
-  (typeahead, otherwise over all ~1,725 RR reference numbers); selecting one
+  (typeahead, otherwise over all ~2,450 RR reference numbers); selecting one
   autofills recipient, address, net-weight, **and material breakdown**
   fields from that RR's line items — **and adds the same RR as a row on the
   Report tab**, even though they're separate tabs.
@@ -137,7 +141,10 @@ calculatorEngine.calculateImpact()              api/rr-data.js (CSV → JSON)
   consolidation Google Sheet's CSV export (no service account needed — the
   sheet is shared "anyone with the link can view"), parses it with
   `papaparse`, normalizes columns to camelCase, and caches in memory for 5
-  minutes. `src/rrData/rrClient.js` is the frontend client: fetch-once
+  minutes. It also merges in the 2025 RRs from the NEO workbook (monthly
+  tabs + the Abatement Report tab's per-RR blocks); if those fail to load,
+  the 2026 RRs still load and the failure is listed in `warnings`.
+  `src/rrData/rrClient.js` is the frontend client: fetch-once
   cache, plus `getRrNumbers()`, `getRrSummary(referenceNo)`, and
   `getRrSummariesInRange(startIso, endIso)`.
 
