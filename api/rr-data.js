@@ -22,11 +22,16 @@ import Papa from 'papaparse'
 
 const csvUrl = (sheetId, gid) => `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`
 
-const CSV_URL = csvUrl('1z_IKx8vqsTo_Opk9cvlLpqWE6YaTZgSXgB5DXEVOIsI', '1661142632') // the RR consolidation tab
+// Sheet/tab IDs are set in .env / Vercel env vars (see .env.example); the defaults are the sheets in use today.
+const env = (name, fallback) => process.env[name] || fallback
 
-const NEO_WORKBOOK_ID = '16CstnzOkrqfBnHf8DMtYUx8auVHhPBk-i2tpuvCcmUI'
-const MONTHLY_2025_URLS = ['2088008955', '1351992279', '445070157', '226866058'].map((gid) => csvUrl(NEO_WORKBOOK_ID, gid)) // Jan–Apr 2025
-const NEO_ABATEMENT_URL = csvUrl(NEO_WORKBOOK_ID, '49103372')
+const CSV_URL = csvUrl(env('RR_SHEET_ID', '1z_IKx8vqsTo_Opk9cvlLpqWE6YaTZgSXgB5DXEVOIsI'), env('RR_SHEET_GID', '1661142632')) // the RR consolidation tab
+
+const NEO_WORKBOOK_ID = env('NEO_SHEET_ID', '16CstnzOkrqfBnHf8DMtYUx8auVHhPBk-i2tpuvCcmUI')
+const MONTHLY_2025_URLS = env('NEO_MONTHLY_2025_GIDS', '2088008955,1351992279,445070157,226866058') // Jan–Apr 2025
+  .split(',')
+  .map((gid) => csvUrl(NEO_WORKBOOK_ID, gid.trim()))
+const NEO_ABATEMENT_URL = csvUrl(NEO_WORKBOOK_ID, env('NEO_ABATEMENT_GID', '49103372'))
 // The Abatement Report tab has no client column; this is NEO's name as the monthly tabs spell it.
 const NEO_ACCOUNT_NAME = 'NEO Property Management Inc.'
 

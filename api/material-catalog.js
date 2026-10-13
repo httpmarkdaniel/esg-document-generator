@@ -12,8 +12,9 @@
 
 import Papa from 'papaparse'
 
-const SHEET_ID = '1uhzQVjh3mz6jUrgpIGp82u8_Dkd2DpsiCIUf5GTBsmY'
-const GID = '606273994'
+// Set in .env / Vercel env vars (see .env.example); the defaults are the sheet in use today.
+const SHEET_ID = process.env.MATERIAL_CATALOG_SHEET_ID || '1uhzQVjh3mz6jUrgpIGp82u8_Dkd2DpsiCIUf5GTBsmY'
+const GID = process.env.MATERIAL_CATALOG_GID || '606273994'
 const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`
 
 const MATERIAL_KEYS = ['metal', 'plastic', 'glass', 'electronics']
