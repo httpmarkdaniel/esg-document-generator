@@ -28,6 +28,19 @@ computed result straight into the Documents tab's forms — values never need
 to be retyped, and the certificate/report code never re-derives ESG math
 itself (see `src/calculator/calculatorEngine.js`).
 
+## Receiving Report tab
+
+Generates the "Incoming Receiving Report" (HEPI FORM - WHSE 4003), rebuilt
+after `S19029 - ACCENTURE (LHEPACC31212_ACNTQ00107056).pdf` with positions
+measured from that PDF (`src/receivingReport/rrReportTemplate.js`). Type an RR
+number and every field fills itself from the same RR data (`/api/rr-data`):
+header, client and addresses, PIS/GP/truck/seal/driver, one table row per
+sheet row, totals and receiving notes. Line items are edited in the Line
+Items table or right on the page; every other text (labels, blanks such as
+Report By or the endorsement lines) is an override in
+`src/receivingReport/rrReportText.js`. Items that don't fit repeat the form
+on the next page; totals, notes and sign-off print on the last page.
+
 ## Receiving Report (RR) autofill
 
 Both the Certificate and the Report can also pull real records from
